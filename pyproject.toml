@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "light-py-env"
+version = "0.1.0"
+description = "Minimal Python env with OpenCV, NumPy, Matplotlib, and Pandas"
+authors = ["Noam"]
+package-mode = false 
+
+[tool.poetry.dependencies]
+python = "^3.10"
+opencv-python = "^4.9.0"
+numpy = "^1.26"
+matplotlib = "^3.8"
+pandas = "^2.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
