@@ -16,7 +16,7 @@ class VideoAverager:
 			raise ValueError("_average_frame not yet defined")
 		return self._average_frame
 
-	def video_frames_generator(self, start_frame: int = 0, interval: int = 1):
+	def video_frames_generator(self, start_frame: int = 0, interval: int = 1, end_frame=-1):
 		# Seek to the start frame directly
 		self.video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 		frame_count = 0
@@ -28,11 +28,15 @@ class VideoAverager:
 			if frame_count % interval == 0:
 				yield frame, frame_count
 			frame_count += 1
+			if frame_count % 20 == 0:
+				print(f"video_frames_generator processing frame #{frame_count}")
+			if end_frame < start_frame + interval * frame_count:
+				break
 
 		self.video.release()
 
-	def average_frames(self, interval: int = 10):
-		frame_gen = self.video_frames_generator(interval)
+	def average_frames(self, start_frame=0, interval: int = 1, end_frame=-1):
+		frame_gen = self.video_frames_generator(start_frame, interval, end_frame)
 		try:
 			# Initialize with first frame
 			next_frame, _ = next(frame_gen)
