@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#	⭾	TABS ONLY – copy / paste
+#	⭾	TABS ONLY – copy / paste exactly
 
 import cv2, math, argparse, random, numpy as np
 from pathlib import Path
@@ -14,6 +14,10 @@ def l_abc(l):   x1,y1,x2,y2=l; return np.array([y1-y2,x2-x1,x1*y2-x2*y1],float)
 def intersect(l1,l2):
 	a,b=l_abc(l1),l_abc(l2); p=np.cross(a,b)
 	return None if abs(p[2])<1e-6 else p[:2]/p[2]
+
+def is_horizontal(angle,deg=10):
+	# within ±deg of 0 or π
+	return min(angle, math.pi-angle) < math.radians(deg)
 
 # ───────── frame sampling ─────────
 def collect_frames(video,out,step=10,max_n=30,scale=0.5):
@@ -40,43 +44,23 @@ def hough_long(img,min_frac):
 	if H is None: return [],edges
 	return [l for l in H[:,0,:] if l_len(l)>=m],edges
 
-# ───────── clustering & trimming ─────────
+# ───────── k-means by angle ─────────
 def kmeans(lines,k):
 	ang=np.float32([[l_angle(l)] for l in lines])
-	_,lab,_=cv2.kmeans(ang,k,None,(cv2.TERM_CRITERIA_EPS+cv2.TERM_CRITERIA_MAX_ITER,30,0.1),10,cv2.KMEANS_PP_CENTERS)
+	_,lab,_=cv2.kmeans(
+		ang,k,None,
+		(cv2.TERM_CRITERIA_EPS+cv2.TERM_CRITERIA_MAX_ITER,30,0.1),
+		10,cv2.KMEANS_PP_CENTERS)
 	C=[[] for _ in range(k)]
 	for idx,l in zip(lab.ravel(),lines): C[idx].append(l)
 	return C
 
+# (optional) light trimming for robustness (kept because cheap)
 def trim(cl,deg=8):
 	if len(cl)<4: return cl
 	a=np.array([l_angle(l) for l in cl]); med=np.median(a)
 	return [l for l,ang in zip(cl,a)
 			if abs(((ang-med+math.pi/2)%math.pi)-math.pi/2)<math.radians(deg)]
-
-# ───────── VP (SVD + random fallback) ─────────
-def vp_svd(cl):
-	if len(cl)<2: return None
-	A=np.stack([l_abc(l) for l in cl]); _,_,vh=np.linalg.svd(A)
-	v=vh[-1]; return None if abs(v[2])<1e-6 else v[:2]/v[2]
-
-def vp_random(cl,tries=200):
-	if len(cl)<2: return None
-	pts=[]
-	for _ in range(tries):
-		l1,l2=random.sample(cl,2)
-		p=intersect(l1,l2)
-		if p is not None and np.all(np.isfinite(p)): pts.append(p)
-	return None if len(pts)<5 else np.median(np.array(pts),0)
-
-def robust_vp(cl):
-	vp=vp_svd(cl)
-	return vp if vp is not None else vp_random(cl)
-
-def focal(v1,v2,cx,cy):
-	n1=v1-np.array([cx,cy]); n2=v2-np.array([cx,cy])
-	f2=-(n1[0]*n2[0]+n1[1]*n2[1])
-	return None if f2<=0 else math.sqrt(f2)
 
 # ───────── main ─────────
 def main():
@@ -86,61 +70,69 @@ def main():
 	a=ap.parse_args(); out=Path(a.out)
 
 	frames=collect_frames(Path(a.video),out,10,a.frames,a.scale)
-	if len(frames)<5: log("too few frames"); return
+	if len(frames)<5:
+		log("too few frames"); return
 	bg=np.median(np.stack(frames),0).astype(np.uint8)
 
-	min_fracs=[0.15,0.10,0.07,0.05,0.04,0.03,0.02]		# progressively shorter
+	min_fracs=[0.15,0.10,0.07,0.05,0.04,0.03,0.02]
 	for frac in min_fracs:
 		lines,edges=hough_long(bg,frac)
-		img_raw = bg.copy()
+
+		# dump raw Hough result
+		img_raw=bg.copy()
 		for l in lines:
-			cv2.line(img_raw, (l[0], l[1]), (l[2], l[3]), (0, 255, 0), 1)
-		cv2.imwrite(str(out/f'hough_lines_{int(frac*100)}p.jpg'), img_raw)
+			cv2.line(img_raw,(l[0],l[1]),(l[2],l[3]),(0,255,0),1)
+		cv2.imwrite(str(out/f'hough_lines_{int(frac*100)}p.jpg'),img_raw)
+
 		if len(lines)<6: continue
-		cl=[trim(c) for c in kmeans(lines,3)]
-		# identify clusters
-		med=[np.median([l_angle(l) for l in c]) if c else 999 for c in cl]
+
+		# ── horizontal vs others
+		horiz_all=[l for l in lines if is_horizontal(l_angle(l))]
+		others   =[l for l in lines if not is_horizontal(l_angle(l))]
+		if len(others)<4: continue
+
+		# ── k-means (k=2) on the rest
+		cl2_all=kmeans(others,2)
+		# decide which cluster is vertical: closer to π/2
+		med=[np.median([l_angle(l) for l in c]) for c in cl2_all]
 		vert_idx=int(np.argmin([abs(a-math.pi/2) for a in med]))
-		other=[i for i in range(3) if i!=vert_idx]
-		if len(other)!=2: continue
-		depth_idx=max(other,key=lambda i:med[i]); horiz_idx=[i for i in other if i!=depth_idx][0]
-		depth,horiz,vert=cl[depth_idx],cl[horiz_idx],cl[vert_idx]
+		depth_idx=1-vert_idx
+		vert_all=cl2_all[vert_idx]
+		depth_all=cl2_all[depth_idx]
 
-		if len(vert)>=2:					# finally have enough vertical lines
-			break
-		log(f"vertical lines {len(vert)} < 2 → relax length to {min_fracs[min_fracs.index(frac)+1]*100:.1f}%")
-	else:
-		log("never got enough vertical lines"); return
+		# optional trimming
+		horiz=trim(horiz_all); vert=trim(vert_all); depth=trim(depth_all)
 
-	log(f"depth={len(depth)}, horiz={len(horiz)}, vert={len(vert)}")
-	vp_depth,vp_vert=robust_vp(depth),robust_vp(vert)
-	if vp_depth is None or vp_vert is None:
-		log("still no VP"); return
+		log(f"depth={len(depth)}, horiz={len(horiz)}, vert={len(vert)}")
+		# if still no verticals, relax frac and try again
+		if len(vert)<2:
+			continue
 
-	h,w=bg.shape[:2]; f=focal(vp_depth,vp_vert,w/2,h/2)
-	print(f"[RESULT] f≈{f:.1f}")
+		# ───────── dumps ─────────
+		out.mkdir(parents=True,exist_ok=True)
 
-	# dumps
-	out.mkdir(parents=True,exist_ok=True)
-	# coloured lines + VPs
-	img=bg.copy()
-	for l in depth: cv2.line(img,(l[0],l[1]),(l[2],l[3]),(255,0,0),2)
-	for l in horiz: cv2.line(img,(l[0],l[1]),(l[2],l[3]),(0,0,255),2)
-	for l in vert:  cv2.line(img,(l[0],l[1]),(l[2],l[3]),(0,255,255),2)
-	for vp in (vp_depth,vp_vert): cv2.circle(img,(int(vp[0]),int(vp[1])),7,(0,255,0),-1)
-	cv2.imwrite(str(out/'lines_vps_coloured.jpg'),img)
-	cv2.imwrite(str(out/'edges.jpg'),edges)
+		# coloured clusters
+		img=bg.copy()
+		for l in horiz_all: cv2.line(img,(l[0],l[1]),(l[2],l[3]),(0,0,255),2)	# Red
+		for l in vert_all:  cv2.line(img,(l[0],l[1]),(l[2],l[3]),(0,255,0),2)	# Green
+		for l in depth_all: cv2.line(img,(l[0],l[1]),(l[2],l[3]),(255,0,0),2)	# Blue
+		cv2.imwrite(str(out/'clusters_rgb.jpg'),img)
+		cv2.imwrite(str(out/'edges.jpg'),edges)
 
-	# intersections depth × horiz
-	inter=bg.copy()
-	for ld in depth:
-		for lh in horiz:
-			p=intersect(ld,lh)
-			if p is not None and np.all(np.isfinite(p)):
-				cv2.drawMarker(inter,(int(p[0]),int(p[1])),(0,255,0),cv2.MARKER_CROSS,20,3)
-	cv2.imwrite(str(out/'depth×horiz_intersections.jpg'),inter)
+		# intersections depth × horiz (good visual sanity-check)
+		inter=bg.copy()
+		for ld in depth:
+			for lh in horiz:
+				p=intersect(ld,lh)
+				if p is not None and np.all(np.isfinite(p)):
+					cv2.drawMarker(inter,(int(p[0]),int(p[1])),(0,255,0),
+					               cv2.MARKER_CROSS,20,3)
+		cv2.imwrite(str(out/'depth×horiz_intersections.jpg'),inter)
 
-	log(f"debug images → {out}")
+		log(f"debug images → {out}")
+		return
+
+	log("could not form valid clusters at any length threshold")
 
 if __name__=='__main__':
 	main()
