@@ -6,14 +6,13 @@ class VideoAverager:
 	def __init__(self, video_path: Path):
 		self.video_path: Path = video_path
 		self.video: cv2.VideoCapture = cv2.VideoCapture(video_path)
-		
+		self._average_frame = None
+
 	@property
-	def average_frame(self) -> np.ndarray:
+	def average_frame(self):
+		if self._average_frame is None:
+			raise ValueError("_average_frame not yet defined")
 		return self._average_frame
-	
-	@average_frame.setter
-	def average_frame(self, value: np.ndarray):
-		self._average_frame = value
 
 	def video_frames_generator(self, start_frame: int = 0, interval: int = 1):
 		# Seek to the start frame directly
@@ -30,20 +29,19 @@ class VideoAverager:
 
 		self.video.release()
 
-	@average_frame.setter
 	def average_frames(self, interval: int = 10):
 		frame_gen = self.video_frames_generator(interval)
 		try:
 			# Initialize with first frame
-			self.average_frame, _ = next(frame_gen).astype(np.float64)
+			self._average_frame, _ = next(frame_gen).astype(np.float64)
 			count = 1
 			
 			# Running average for remaining frames
 			for current_frame, _ in frame_gen:
-				self.average_frame = (self.average_frame * count + current_frame) / (count + 1)
+				self._average_frame = (self._average_frame * count + current_frame) / (count + 1)
 				count += 1
 				
-			self.average_frame = self._average_frame.astype(np.uint8)
+			self._average_frame = self._average_frame.astype(np.uint8)
 		except StopIteration:
 			raise ValueError("No frames were processed")
 
