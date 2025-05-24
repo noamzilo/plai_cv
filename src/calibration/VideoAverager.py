@@ -5,7 +5,9 @@ from pathlib import Path
 class VideoAverager:
 	def __init__(self, video_path: Path):
 		self.video_path: Path = video_path
-		self.video: cv2.VideoCapture = cv2.VideoCapture(video_path)
+		assert video_path.is_file()
+		self.video: cv2.VideoCapture = cv2.VideoCapture(str(video_path))
+		assert self.video.isOpened()
 		self._average_frame = None
 
 	@property
@@ -33,7 +35,8 @@ class VideoAverager:
 		frame_gen = self.video_frames_generator(interval)
 		try:
 			# Initialize with first frame
-			self._average_frame, _ = next(frame_gen).astype(np.float64)
+			next_frame, _ = next(frame_gen)
+			self._average_frame = next_frame.astype(np.float64)
 			count = 1
 			
 			# Running average for remaining frames

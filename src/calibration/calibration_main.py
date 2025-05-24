@@ -7,7 +7,9 @@ from calibration.VideoAverager import VideoAverager
 
 def main():
 	video_name = "game1_3.mp4"
+	raw_data_path.is_dir()
 	video_path = raw_data_path / video_name 
+	assert video_path.is_file()
 	video_averager = VideoAverager(video_path)
 	video_averager.average_frames(interval=10)
 	
