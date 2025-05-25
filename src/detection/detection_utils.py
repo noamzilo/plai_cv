@@ -37,14 +37,35 @@ def draw_detections(img, boxes, color=(0, 255, 0)):
 	return img
 
 # ───────────────────────────── Main Test ─────────────────────────────
-def run_detection_on_image(image_path):
+def run_detection_on_image(image_path, is_draw=False):
 	model = load_yolo_detector()
 	img = cv2.imread(str(image_path))
 	boxes = detect_players(img, model)
-	img_with_boxes = draw_detections(img, boxes)
-	cv2.imshow("Detections", img_with_boxes)
-	cv2.waitKey(0)
-	cv2.destroyAllWindows()
+	if is_draw:
+		img_with_boxes = draw_detections(img, boxes)
+		cv2.imshow("Detections", img_with_boxes)
+		cv2.waitKey(0)
+		cv2.destroyAllWindows()
+
+def detect_pitch_corners(image: np.ndarray):
+	# known points, hard coded for now. Corresponds to game 1_3
+	left_bottom_net = np.array([840, 705])
+	left_bottom_right = np.array([2955, 751])
+	far_left_corner = np.array([1372, 485])
+	far_right_corner = np.array([2451, 510])
+
+	# inferred by extrapolation: close = net + (net - far)
+	close_left_corner = left_bottom_net + (left_bottom_net - far_left_corner)
+	close_right_corner = left_bottom_right + (left_bottom_right - far_right_corner)
+
+	return {
+		"far_left_corner": far_left_corner,
+		"far_right_corner": far_right_corner,
+		"close_left_corner": close_left_corner,
+		"close_right_corner": close_right_corner,
+		"left_bottom_net": left_bottom_net,
+		"left_bottom_right": left_bottom_right,
+	}
 
 if __name__ == "__main__":
 	image_path = calculated_data_path / "frame_068.png"
