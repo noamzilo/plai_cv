@@ -11,6 +11,7 @@ opencv-python = "^4.9.0"
 numpy = "^1.26"
 matplotlib = "^3.8"
 pandas = "^2.2"
+ultralytics = "^8.3.144"
 
 [build-system]
 requires = ["poetry-core"]
