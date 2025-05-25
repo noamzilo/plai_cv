@@ -6,3 +6,5 @@ data_path = project_root / "data"
 print(f"data_path: {data_path}")
 raw_data_path = project_root / "data" / "raw"
 calculated_data_path = project_root / "data" / "calculated"
+models_path = project_root / "models"
+yolo_model_path = models_path / "yolo_model.pt"

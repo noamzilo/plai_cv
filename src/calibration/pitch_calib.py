@@ -16,7 +16,7 @@ def intersect(l1,l2):
 	a,b=l_abc(l1),l_abc(l2); p=np.cross(a,b)
 	return None if abs(p[2])<1e-6 else p[:2]/p[2]
 
-def is_horizontal(angle,deg=10):		# only for horizontals
+def is_horizontal(angle,deg=15):		# only for horizontals
 	return min(angle,math.pi-angle) < math.radians(deg)
 
 # ───────── frame sampling ─────────
@@ -40,6 +40,9 @@ def collect_frames(video,out,step=10,max_n=30,scale=0.5):
 def hough_long(img,min_frac):
 	h,w=img.shape[:2]
 	edges=cv2.Canny(cv2.cvtColor(img,cv2.COLOR_BGR2GRAY),50,150)
+
+	left, right = int(0.28*w), int(0.65*w)
+	edges[0 : h//2, left : right] = 0
 
 	# pass 1 – generic long lines
 	m1=int(min_frac*min(h,w))
@@ -92,6 +95,15 @@ def two_vps_ransac(lines,iters=400,th=60):
 			best_v2,best_in2=vp,inl
 	return best_v1,best_v2,best_in1,best_in2
 
+# ───────── post-clustering fix ─────────
+def assign_remaining(lines,cl1,cl2,v1,v2):
+	rem=[l for l in lines if l not in cl1 and l not in cl2]
+	for l in rem:
+		if pt_line_dist2(v1,l) < pt_line_dist2(v2,l):
+			cl1.append(l)
+		else:
+			cl2.append(l)
+
 # ───────── main ─────────
 def main():
 	ap=argparse.ArgumentParser()
@@ -120,11 +132,15 @@ def main():
 
 		v1,v2,in1,in2=two_vps_ransac(others)
 		if v1 is None or v2 is None: continue
+
+		# choose naming by y-coord
 		if v1[1]<v2[1]:
 			vert,depth,vp_vert,vp_depth=in1,in2,v1,v2
 		else:
 			vert,depth,vp_vert,vp_depth=in2,in1,v2,v1
-		if len(vert)<2: continue
+
+		# NEW: shove every leftover line into its nearest VP
+		assign_remaining(others,vert,depth,vp_vert,vp_depth)
 
 		vp_horiz=robust_vp(horiz)
 
@@ -148,7 +164,6 @@ def main():
 		for l in vert:  draw(l,(0,255,0))
 		for l in depth: draw(l,(255,0,0))
 
-		# ONLY depth & vert VP marks
 		cv2.drawMarker(canvas,(int(vp_depth[0])+off_x,int(vp_depth[1])+off_y),
 		              (255,0,0),markerType=cv2.MARKER_CROSS,markerSize=30,thickness=4)
 		cv2.drawMarker(canvas,(int(vp_vert[0])+off_x,int(vp_vert[1])+off_y),
