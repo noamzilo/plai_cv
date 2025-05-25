@@ -25,7 +25,7 @@ class VideoReader():
 			if not ret:
 				break
 			if frame_count % interval == 0:
-				yield frame, frame_count
+				yield frame
 			frame_count += 1
 			if frame_count % 20 == 0:
 				print(f"video_frames_generator processing frame #{frame_count}")
