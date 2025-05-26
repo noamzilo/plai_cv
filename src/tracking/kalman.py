@@ -157,7 +157,8 @@ def draw_bounding_boxes(
 
 def draw_tracker_overlay(
 	image_frame: numpy_lib.ndarray,
-	tracker_rows_dataframe: pandas_lib.DataFrame
+	tracker_rows_dataframe: pandas_lib.DataFrame,
+	resize_scale: float = 1.0
 ) -> numpy_lib.ndarray:
 	slot_colors_bgr = [
 		(255, 0,   0),		# Player 0 – Red
@@ -165,10 +166,17 @@ def draw_tracker_overlay(
 		(0,   0,   255),	# Player 2 – Blue
 		(255, 255, 0)		# Player 3 – Cyan
 	]
+
+	if resize_scale != 1.0:
+		image_frame = cv2.resize(image_frame, (0, 0), fx=resize_scale, fy=resize_scale)
+
 	for _, row_data in tracker_rows_dataframe.iterrows():
 		if not bool(row_data["is_valid"]):
 			continue
-		x1, y1, x2, y2 = map(int, [row_data.x1, row_data.y1, row_data.x2, row_data.y2])
+		x1 = int(row_data.x1 * resize_scale)
+		y1 = int(row_data.y1 * resize_scale)
+		x2 = int(row_data.x2 * resize_scale)
+		y2 = int(row_data.y2 * resize_scale)
 		player_identifier = int(row_data.player_id)
 		color_bgr = slot_colors_bgr[player_identifier % len(slot_colors_bgr)]
 		cv2.rectangle(image_frame, (x1, y1), (x2, y2), color_bgr, 2)
@@ -195,7 +203,7 @@ def preview_tracking_overlay(video_file_path: Path, tracking_dataframe: pandas_l
 	video_reader = VideoReader(video_file_path)
 	for frame_index, image_frame in video_reader.video_frames_generator():
 		tracking_rows = tracking_dataframe[tracking_dataframe.frame_ind == frame_index]
-		image_with_overlay = draw_tracker_overlay(image_frame.copy(), tracking_rows)
+		image_with_overlay = draw_tracker_overlay(image_frame.copy(), tracking_rows, resize_scale=0.25)
 		cv2.imshow("Kalman tracking", image_with_overlay)
 		if cv2.waitKey(1) == ord("q"):
 			break
@@ -298,6 +306,7 @@ def create_tracking_dataframe(detections_dataframe: pandas_lib.DataFrame) -> pan
 def main() -> None:
 	VISUALIZE_DETECTIONS_ONLY	= False
 	GENERATE_NEW_TRACKING_CSV	= False
+	is_plot_player_center_positions = False
 	VISUALIZE_TRACKING_OVERLAY	= True
 
 	if VISUALIZE_DETECTIONS_ONLY:
