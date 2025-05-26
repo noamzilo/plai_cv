@@ -4,6 +4,7 @@
 import numpy as np
 import cv2
 from utils.paths import calculated_data_path
+import plotly.graph_objects as go
 
 # ─── 2-D image points ─────────────────────────────────────────────────
 from calibration.pitch_corners_const import (
@@ -215,3 +216,101 @@ cv2.waitKey(0)
 output_path = calculated_data_path / "reprojection_overlay.scaled.png"
 cv2.imwrite(str(output_path), points_on_image)
 print(f"[INFO] Saved reprojection visualization → {output_path}")
+
+
+
+# visualize 3d with plotly
+
+def visualize_3d_scene_plotly(object_points_3d, camera):
+	object_points_3d = np.asarray(object_points_3d)
+	xs, ys, zs = object_points_3d[:, 0], object_points_3d[:, 1], object_points_3d[:, 2]
+
+	# Camera pose
+	R = camera.rotation_matrix
+	T = camera.translation_vector.reshape(3)
+	camera_center = -R.T @ T
+
+	# Camera axes (length = 1.0)
+	axis_length = 1.0
+	x_axis = R.T @ np.array([axis_length, 0, 0])
+	y_axis = R.T @ np.array([0, axis_length, 0])
+	z_axis = R.T @ np.array([0, 0, axis_length])
+
+	x_axis_end = camera_center + x_axis
+	y_axis_end = camera_center + y_axis
+	z_axis_end = camera_center + z_axis
+
+	fig = go.Figure()
+
+	# 3D keypoints
+	fig.add_trace(go.Scatter3d(
+		x=xs,
+		y=ys,
+		z=zs,
+		mode='markers+text',
+		text=[f"P{i}" for i in range(len(xs))],
+		textposition='top center',
+		marker=dict(size=4, color='blue'),
+		name='3D keypoints'
+	))
+
+	# Camera center
+	fig.add_trace(go.Scatter3d(
+		x=[camera_center[0]],
+		y=[camera_center[1]],
+		z=[camera_center[2]],
+		mode='markers+text',
+		text=["Camera"],
+		textposition='bottom center',
+		marker=dict(size=6, color='red', symbol='circle'),
+		name='Camera Center'
+	))
+
+	# Axis lines
+	def axis_line(start, end, color, name):
+		return go.Scatter3d(
+			x=[start[0], end[0]],
+			y=[start[1], end[1]],
+			z=[start[2], end[2]],
+			mode='lines',
+			line=dict(color=color, width=5),
+			name=name
+		)
+
+	fig.add_trace(axis_line(camera_center, x_axis_end, 'red', 'X-axis'))
+	fig.add_trace(axis_line(camera_center, y_axis_end, 'green', 'Y-axis'))
+	fig.add_trace(axis_line(camera_center, z_axis_end, 'blue', 'Z-axis'))
+
+	# Axis cones
+	def axis_cone(end, vec, color, name):
+		return go.Cone(
+			x=[end[0]], y=[end[1]], z=[end[2]],
+			u=[vec[0]], v=[vec[1]], w=[vec[2]],
+			sizemode="absolute",
+			sizemax=0.2,
+			anchor="tail",
+			colorscale=[[0, color], [1, color]],
+			showscale=False,
+			name=name
+		)
+
+	fig.add_trace(axis_cone(x_axis_end, x_axis * 0.001, 'red', 'X-dir'))
+	fig.add_trace(axis_cone(y_axis_end, y_axis * 0.001, 'green', 'Y-dir'))
+	fig.add_trace(axis_cone(z_axis_end, z_axis * 0.001, 'blue', 'Z-dir'))
+
+	fig.update_layout(
+		title="3D Calibration Visualization with Camera Direction",
+		scene=dict(
+			xaxis_title='X (m)',
+			yaxis_title='Y (m)',
+			zaxis_title='Z (m)',
+			aspectmode='data'
+		),
+		width=900,
+		height=700,
+		showlegend=True
+	)
+
+	fig.show()
+
+visualize_3d_scene_plotly(object_points_3d, camera)
