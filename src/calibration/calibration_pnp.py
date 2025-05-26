@@ -8,14 +8,18 @@ from utils.paths import calculated_data_path
 # ─── 2-D image points ─────────────────────────────────────────────────
 from calibration.pitch_corners_const import (
 	net_left_bottom, net_right_bottom, net_center_bottom,
-	far_left_corner, far_right_corner, close_white_line_center,
-	image_width, image_height
+	far_left_corner, far_right_corner,
+	image_width, image_height, net_left_top, net_right_top,
+	close_white_line_center_right_far, close_white_line_center_right_close,
+	close_white_line_center_left_close, close_white_line_center_left_far,
 )
 
-from calibration.pitch_keypoints import (
+from calibration.pitch_keypoints_3d import (
 	far_left_corner_3d, far_right_corner_3d,
 	net_left_bottom_3d, net_right_bottom_3d, net_center_bottom_3d,
-	close_white_line_center_3d
+	net_left_top_3d, net_right_top_3d,
+	close_white_line_center_left_close_3d, close_white_line_center_left_far_3d,
+	close_white_line_center_right_close_3d, close_white_line_center_right_far_3d
 )
 
 class Camera:
@@ -100,7 +104,12 @@ image_points_2d = [
 	net_left_bottom,
 	net_right_bottom,
 	net_center_bottom,
-	close_white_line_center
+	close_white_line_center_left_far,
+	close_white_line_center_right_far,
+	close_white_line_center_left_close,
+	close_white_line_center_right_close,
+	net_left_top,
+	net_right_top
 ]
 
 object_points_3d = [
@@ -109,7 +118,12 @@ object_points_3d = [
 	net_left_bottom_3d,
 	net_right_bottom_3d,
 	net_center_bottom_3d,
-	close_white_line_center_3d
+	close_white_line_center_left_far_3d,
+	close_white_line_center_right_far_3d,
+	close_white_line_center_left_close_3d,
+	close_white_line_center_right_close_3d,
+	net_left_top_3d,
+	net_right_top_3d
 ]
 
 # ─── Instantiate and Run ───────────────────────────────────────────────
@@ -141,7 +155,6 @@ projected = camera.project_points(object_points_3d)
 print("\n[INFO] Reprojected 2D points:")
 for i, pt in enumerate(projected):
 	print(f"  Reprojected: {pt}  ← Original: {image_points_2d[i]}")
-
 # ─── Visualize 2D Keypoints vs Reprojections ──────────────────────────
 assert calculated_data_path.is_dir()
 average_frame_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
@@ -155,30 +168,41 @@ scale_factor = 0.25
 resized_image = cv2.resize(pitch_image, (0, 0), fx=scale_factor, fy=scale_factor)
 points_on_image = resized_image.copy()
 
-# Draw original 2D points as green +
-for (x, y) in image_points_2d:
-	x_scaled = int(x * scale_factor)
-	y_scaled = int(y * scale_factor)
+# Draw all
+for i, ((x_img, y_img), (x_proj, y_proj)) in enumerate(zip(image_points_2d, projected)):
+	x_img_scaled	= int(x_img * scale_factor)
+	y_img_scaled	= int(y_img * scale_factor)
+	x_proj_scaled	= int(x_proj * scale_factor)
+	y_proj_scaled	= int(y_proj * scale_factor)
+
+	# Original 2D point – green cross
 	cv2.drawMarker(
 		points_on_image,
-		position=(x_scaled, y_scaled),
+		position=(x_img_scaled, y_img_scaled),
 		color=(0, 255, 0),	# Green
 		markerType=cv2.MARKER_CROSS,
 		markerSize=15,
 		thickness=2
 	)
 
-# Draw projected 2D points as blue +
-for (x, y) in projected:
-	x_scaled = int(x * scale_factor)
-	y_scaled = int(y * scale_factor)
+	# Projected point – blue cross
 	cv2.drawMarker(
 		points_on_image,
-		position=(x_scaled, y_scaled),
+		position=(x_proj_scaled, y_proj_scaled),
 		color=(255, 0, 0),	# Blue
 		markerType=cv2.MARKER_CROSS,
 		markerSize=15,
 		thickness=2
+	)
+
+	# Line between them – red
+	cv2.line(
+		points_on_image,
+		pt1=(x_img_scaled, y_img_scaled),
+		pt2=(x_proj_scaled, y_proj_scaled),
+		color=(0, 0, 255),	# Red
+		thickness=1,
+		lineType=cv2.LINE_AA
 	)
 
 # Show window
