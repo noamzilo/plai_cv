@@ -9,7 +9,7 @@ from utils.paths import calculated_data_path
 from calibration.pitch_corners_const import (
 	net_left_bottom, net_right_bottom, net_center_bottom,
 	far_left_corner, far_right_corner,
-	image_width, image_height, net_left_top, net_right_top,
+	image_width, image_height, net_left_top, net_right_top, net_center_top,
 	close_white_line_center_right_far, close_white_line_center_right_close,
 	close_white_line_center_left_close, close_white_line_center_left_far,
 )
@@ -17,7 +17,7 @@ from calibration.pitch_corners_const import (
 from calibration.pitch_keypoints_3d import (
 	far_left_corner_3d, far_right_corner_3d,
 	net_left_bottom_3d, net_right_bottom_3d, net_center_bottom_3d,
-	net_left_top_3d, net_right_top_3d,
+	net_left_top_3d, net_right_top_3d, net_center_top_3d,
 	close_white_line_center_left_close_3d, close_white_line_center_left_far_3d,
 	close_white_line_center_right_close_3d, close_white_line_center_right_far_3d
 )
@@ -109,7 +109,8 @@ image_points_2d = [
 	close_white_line_center_left_close,
 	close_white_line_center_right_close,
 	net_left_top,
-	net_right_top
+	net_right_top,
+	net_center_top
 ]
 
 object_points_3d = [
@@ -123,7 +124,8 @@ object_points_3d = [
 	close_white_line_center_left_close_3d,
 	close_white_line_center_right_close_3d,
 	net_left_top_3d,
-	net_right_top_3d
+	net_right_top_3d,
+	net_center_top_3d
 ]
 
 # ─── Instantiate and Run ───────────────────────────────────────────────
