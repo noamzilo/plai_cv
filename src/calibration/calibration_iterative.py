@@ -62,13 +62,14 @@ R0, _ = cv2.Rodrigues(rvec0)
 C0 = (-R0.T @ tvec0).flatten()					# world camera centre
 
 # state vector: [rx, ry, rz, Cx, Cz]  with Cy fixed = 20 m
-FIXED_CY = 20.0
-x0 = np.hstack([rvec0.flatten(), C0[[0,2]]])
+# state vector: [rx, ry, rz, Cy, Cz]  with Cx fixed = 20 m
+FIXED_CX = 20.0
+x0 = np.hstack([rvec0.flatten(), C0[[1,2]]])	# Cy, Cz
 
 def residuals(x):
 	rvec = x[:3].reshape(3,1).astype(np.float32)
-	Cx, Cz = x[3:]
-	Cw = np.array([Cx, FIXED_CY, Cz], dtype=np.float32).reshape(3,1)
+	Cy, Cz = x[3:]
+	Cw = np.array([FIXED_CX, Cy, Cz], dtype=np.float32).reshape(3,1)
 	R, _ = cv2.Rodrigues(rvec)
 	tvec = -R @ Cw										# convert to camera coords
 	proj, _ = cv2.projectPoints(object_points_3d, rvec, tvec, K, dist)
@@ -78,11 +79,12 @@ opt = least_squares(residuals, x0, method="lm", xtol=1e-10, ftol=1e-10, max_nfev
 
 # ─── Extract refined pose ────────────────────────────────────────────
 rvec = opt.x[:3].reshape(3,1).astype(np.float32)
-Cx, Cz = opt.x[3:]
-Cw  = np.array([Cx, FIXED_CY, Cz], dtype=np.float32).reshape(3,1)
+Cy, Cz = opt.x[3:]
+Cw  = np.array([FIXED_CX, Cy, Cz], dtype=np.float32).reshape(3,1)
 R, _ = cv2.Rodrigues(rvec)
 tvec = -R @ Cw
 P = K @ np.hstack((R, tvec))
+
 
 # ─── Diagnostics ─────────────────────────────────────────────────────
 proj_pts, _ = cv2.projectPoints(object_points_3d, rvec, tvec, K, dist)
