@@ -1,178 +1,322 @@
 #!/usr/bin/env python3
 #	⭾	TABS ONLY – copy / paste exactly
+#	⭾	FULL MEANINGFUL VARIABLE NAMES – no shortcuts, no single-letter names
 
-import pandas as pd, numpy as np
+import pandas as pandas_lib, numpy as numpy_lib
 from pathlib import Path
 from filterpy.kalman import KalmanFilter
 from scipy.optimize import linear_sum_assignment
 from collections import deque
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as pyplot_lib
 import cv2
 
-# ─── Paths ─────────────────────────────────────────────────────────────
-from utils.paths import detections_csv_path, tracked_detections_csv_path
+# ─── Paths (project specific) ──────────────────────────────────────────
+from utils.paths import detections_csv_path, tracked_detections_csv_path, raw_data_path
 
-# ─── Net reference points (constants) ──────────────────────────────────
-net_left_bottom		= np.array([840, 705])
-net_right_bottom	= np.array([2955, 751])
+# ─── Constants ─────────────────────────────────────────────────────────
+MAX_CENTER_DISTANCE_THRESHOLD	= 250		# distance gate for matching
+IOU_SCORE_THRESHOLD				= 0.30		# minimum IOU score for a valid match
+MAX_TRACKER_AGE_FRAMES			= 20		# how many missed frames before a tracker is discarded
 
-def side_sign(pt_xy: np.ndarray) -> float:
-	"""Return sign (+ / -) indicating which half-court the point is on."""
-	x1, y1 = net_left_bottom
-	x2, y2 = net_right_bottom
-	x,  y  = pt_xy
-	return (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+# Net (paddle-ball) reference points, already measured in the image
+net_left_bottom_point	= numpy_lib.array([840, 705])
+net_right_bottom_point	= numpy_lib.array([2955, 751])
 
-# ─── Kalman Filter Wrapper ─────────────────────────────────────────────
-class Tracker:
-	def __init__(self, id_):
-		self.id = id_
-		self.kf = KalmanFilter(dim_x=8, dim_z=4)
-		self.kf.F = np.eye(8)
-		for i in range(4):
-			self.kf.F[i, i + 4] = 1
-		self.kf.H = np.eye(4, 8)
-		self.kf.R *= 10
-		self.kf.P *= 100
-		self.kf.Q *= 0.01
-		self.age = 0
-		self.time_since_update = 0
-		self.history = deque(maxlen=10)
+# ─── Geometry helpers ──────────────────────────────────────────────────
+def court_side_sign(point_xy: tuple[float, float]) -> int:
+	"""
+	Return +1 for the right half-court, -1 for the left half-court, 0 if exactly on the net.
+	"""
+	x1, y1 = net_left_bottom_point
+	x2, y2 = net_right_bottom_point
+	x_coord, y_coord = point_xy
+	determinant_value = (x2 - x1) * (y_coord - y1) - (y2 - y1) * (x_coord - x1)
+	return 1 if determinant_value > 0 else -1 if determinant_value < 0 else 0
 
-	def update(self, bbox):
-		self.kf.update(bbox)
-		self.time_since_update = 0
+def intersection_over_union(bbox_a: numpy_lib.ndarray, bbox_b: numpy_lib.ndarray) -> float:
+	"""
+	Compute intersection-over-union of two bounding boxes.
+	Each bbox is [x1, y1, x2, y2] in absolute pixel coordinates.
+	"""
+	xx1, yy1 = numpy_lib.maximum(bbox_a[:2], bbox_b[:2])
+	xx2, yy2 = numpy_lib.minimum(bbox_a[2:], bbox_b[2:])
+	intersection_width, intersection_height = numpy_lib.maximum(0, [xx2 - xx1, yy2 - yy1])
+	intersection_area = intersection_width * intersection_height
+	union_area = (
+		(bbox_a[2] - bbox_a[0]) * (bbox_a[3] - bbox_a[1]) +
+		(bbox_b[2] - bbox_b[0]) * (bbox_b[3] - bbox_b[1]) -
+		intersection_area
+	)
+	return intersection_area / union_area if union_area > 0 else 0.0
 
-	def predict(self):
-		self.kf.predict()
-		self.age += 1
-		self.time_since_update += 1
-		return self.kf.x[:4]
+# ─── Kalman-based tracker ──────────────────────────────────────────────
+class PlayerTracker:
+	def __init__(self, slot_identifier: int, initial_detection: numpy_lib.ndarray):
+		self.slot_identifier			= slot_identifier				# 0,1 top; 2,3 bottom
+		self.court_side				= -1 if slot_identifier < 2 else 1
+		self.missed_frame_counter	= 0
+		self.kalman_filter			= KalmanFilter(dim_x=8, dim_z=4)
+		self.kalman_filter.F		= numpy_lib.eye(8)
+		for index in range(4):
+			self.kalman_filter.F[index, index + 4] = 1
+		self.kalman_filter.H		= numpy_lib.eye(4, 8)
+		self.kalman_filter.R		*= 10
+		self.kalman_filter.P		*= 100
+		self.kalman_filter.Q		*= 0.01
+		self.kalman_filter.x[:4]	= initial_detection.reshape(-1, 1)
+	def update(self, detection_bbox: numpy_lib.ndarray) -> None:
+		self.kalman_filter.update(detection_bbox)
+		self.missed_frame_counter = 0
+	def predict(self) -> None:
+		self.kalman_filter.predict()
+		self.missed_frame_counter += 1
+	def is_expired(self) -> bool:
+		return self.missed_frame_counter > MAX_TRACKER_AGE_FRAMES
+	def current_state_bbox(self) -> numpy_lib.ndarray:
+		return self.kalman_filter.x[:4].ravel()
 
-	def get_state(self):
-		return self.kf.x[:4].ravel()
+# ─── Matching logic (Hungarian with side + distance gating) ────────────
+def match_detections_to_trackers(
+	existing_trackers: list[PlayerTracker],
+	current_detections: list[numpy_lib.ndarray]
+):
+	if not existing_trackers:
+		return (
+			numpy_lib.empty((0, 2), dtype=int),
+			numpy_lib.arange(len(current_detections)),
+			numpy_lib.empty(0, dtype=int)
+		)
 
-# ─── IOU + side-aware Hungarian matcher ────────────────────────────────
-def iou(bb1, bb2):
-	xx1, yy1 = np.maximum(bb1[:2], bb2[:2])
-	xx2, yy2 = np.minimum(bb1[2:], bb2[2:])
-	w, h = np.maximum(0, [xx2-xx1, yy2-yy1])
-	inter = w*h
-	union = ((bb1[2]-bb1[0])*(bb1[3]-bb1[1]) +
-			 (bb2[2]-bb2[0])*(bb2[3]-bb2[1]) - inter)
-	return inter/union if union>0 else 0. # no iou from opposite sides of net
+	cost_matrix = numpy_lib.zeros((len(current_detections), len(existing_trackers)), numpy_lib.float32)
 
-def assign_detections_to_trackers(trackers, detections, iou_thr=0.1):
-	if not trackers:
-		return np.empty((0,2),int), np.arange(len(detections)), []
+	for detection_index, detection_bbox in enumerate(current_detections):
+		detection_center_x	= (detection_bbox[0] + detection_bbox[2]) / 2
+		detection_center_y	= (detection_bbox[1] + detection_bbox[3]) / 2
+		for tracker_index, tracker in enumerate(existing_trackers):
+			if tracker.court_side != court_side_sign((detection_center_x, detection_center_y)):
+				# Detection is on the wrong side for this tracker
+				continue
+			tracker_bbox = tracker.current_state_bbox()
+			tracker_center_x	= (tracker_bbox[0] + tracker_bbox[2]) / 2
+			tracker_center_y	= (tracker_bbox[1] + tracker_bbox[3]) / 2
+			center_distance = numpy_lib.hypot(
+				detection_center_x - tracker_center_x,
+				detection_center_y - tracker_center_y
+			)
+			if center_distance > MAX_CENTER_DISTANCE_THRESHOLD:
+				# Distance gate ➜ skip unlikely matches
+				continue
+			cost_matrix[detection_index, tracker_index] = intersection_over_union(
+				detection_bbox, tracker_bbox
+			)
 
-	M = np.zeros((len(detections), len(trackers)), np.float32)
-	for d_i, det in enumerate(detections):
-		d_side = side_sign([(det[0]+det[2])/2, (det[1]+det[3])/2])
-		for t_i, trk in enumerate(trackers):
-			tc = trk.get_state()
-			t_side = side_sign([(tc[0]+tc[2])/2, (tc[1]+tc[3])/2])
-			if d_side * t_side > 0:				# same half-court
-				M[d_i, t_i] = iou(det, tc)
-			else:
-				M[d_i, t_i] = 0.
+	assignment_pairs = numpy_lib.array(linear_sum_assignment(-cost_matrix)).T
 
-	matched = np.array(linear_sum_assignment(-M)).T
-	unmatched_dets = [i for i in range(len(detections)) if i not in matched[:,0]]
-	unmatched_trks = [i for i in range(len(trackers))   if i not in matched[:,1]]
-	good_matches = []
-	for d, t in matched:
-		if M[d, t] >= iou_thr:	good_matches.append([d,t])
-		else:					unmatched_dets.append(d); unmatched_trks.append(t)
-	return np.array(good_matches), np.array(unmatched_dets), np.array(unmatched_trks)
+	valid_matches, unmatched_detection_indices, unmatched_tracker_indices = [], [], []
+	for detection_index, tracker_index in assignment_pairs:
+		if cost_matrix[detection_index, tracker_index] >= IOU_SCORE_THRESHOLD:
+			valid_matches.append([detection_index, tracker_index])
+		else:
+			unmatched_detection_indices.append(detection_index)
+			unmatched_tracker_indices.append(tracker_index)
 
-# ─── Plotting (8 PNGs) ─────────────────────────────────────────────────
-def plot_player_locations(df):
-	for pid in range(4):
-		pdf = df[(df.player_id==pid) & (df.is_valid)]
-		if pdf.empty: continue
-		centers = pd.DataFrame({
-			"frame": pdf.frame_ind,
-			"x": (pdf.x1+pdf.x2)/2,
-			"y": (pdf.y1+pdf.y2)/2
-		})
-		for coord in ("x","y"):
-			plt.figure(figsize=(12,8))
-			plt.plot(centers.frame, centers[coord])
-			plt.xlabel("Frame"); plt.ylabel(f"{coord}_center")
-			plt.title(f"Player {pid} – {coord}_center")
-			plt.grid(True); plt.tight_layout()
-			out = tracked_detections_csv_path.with_suffix(f".player{pid}_{coord}.png")
-			plt.savefig(out); plt.close()
-			print(f"[INFO] saved {out}")
+	for detection_index in range(len(current_detections)):
+		if detection_index not in assignment_pairs[:, 0]:
+			unmatched_detection_indices.append(detection_index)
+	for tracker_index in range(len(existing_trackers)):
+		if tracker_index not in assignment_pairs[:, 1]:
+			unmatched_tracker_indices.append(tracker_index)
 
-# ─── Tracking orchestration ────────────────────────────────────────────
-def create_tracking_df(detections_df):
-	n_frames = int(detections_df.frame_ind.max()) + 1
-	trackers, next_id, rows = [], 0, []
-	for i_frame in range(n_frames):
-		if i_frame % 100 == 0:
-			print(f"processing frame #{i_frame}")
-		detections = detections_df[detections_df.frame_ind == i_frame][["x1", "y1", "x2", "y2"]].values.tolist()
-		for t in trackers: t.predict()
+	return (
+		numpy_lib.array(valid_matches),
+		numpy_lib.array(unmatched_detection_indices),
+		numpy_lib.array(unmatched_tracker_indices)
+	)
 
-		matches, um_d, um_t = assign_detections_to_trackers(trackers, detections)
-		for d,t in matches: trackers[t].update(detections[d])
-		for d in um_d:
-			trk = Tracker(next_id); trk.update(detections[d]); trackers.append(trk); next_id+=1
-		trackers = [t for t in trackers if t.time_since_update<=10]
+# ─── Slot management helpers ───────────────────────────────────────────
+def free_slot_identifiers(active_trackers: list[PlayerTracker], desired_side: int) -> list[int]:
+	available_slots = [0, 1] if desired_side == -1 else [2, 3]
+	occupied_slots = [tracker.slot_identifier for tracker in active_trackers if tracker.court_side == desired_side]
+	return [identifier for identifier in available_slots if identifier not in occupied_slots]
 
-		slots = sorted(trackers, key=lambda x:x.id)[:4]
-		while len(slots)<4:
-			dummy = Tracker(-1); dummy.kf.x[:4]=np.nan; slots.append(dummy)
+# ─── Drawing helpers (re-usable) ───────────────────────────────────────
+def draw_bounding_boxes(
+	image_frame: numpy_lib.ndarray,
+	rows_dataframe: pandas_lib.DataFrame,
+	color_bgr: tuple[int, int, int] = (128, 128, 128),
+	label_prefix: str = "Det"
+) -> numpy_lib.ndarray:
+	for row_index, row_data in rows_dataframe.iterrows():
+		x1, y1, x2, y2 = map(int, row_data[["x1", "y1", "x2", "y2"]])
+		cv2.rectangle(image_frame, (x1, y1), (x2, y2), color_bgr, 2)
+		cv2.putText(
+			image_frame, f"{label_prefix} {row_index}", (x1, y1 - 8),
+			cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 1
+		)
+	return image_frame
 
-		for slot,trk in enumerate(slots):
-			x1,y1,x2,y2 = trk.get_state()
-			valid = not np.isnan(x1)
-			rows.append([i_frame, x1, y1, x2, y2, slot, valid])
-	return pd.DataFrame(rows, columns=["frame_ind","x1","y1","x2","y2","player_id","is_valid"])
-
-def draw_tracking_overlay(frame, tracks_frame):
-	colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0)]
-	for _, row in tracks_frame.iterrows():
-		if not row["is_valid"]:
+def draw_tracker_overlay(
+	image_frame: numpy_lib.ndarray,
+	tracker_rows_dataframe: pandas_lib.DataFrame
+) -> numpy_lib.ndarray:
+	slot_colors_bgr = [
+		(255, 0,   0),		# Player 0 – Red
+		(0,   255, 0),		# Player 1 – Green
+		(0,   0,   255),	# Player 2 – Blue
+		(255, 255, 0)		# Player 3 – Cyan
+	]
+	for _, row_data in tracker_rows_dataframe.iterrows():
+		if not bool(row_data["is_valid"]):
 			continue
-		x1, y1, x2, y2 = map(int, [row.x1, row.y1, row.x2, row.y2])
-		pid = int(row.player_id)
-		cv2.rectangle(frame, (x1,y1), (x2,y2), colors[pid%len(colors)], 2)
-		cv2.putText(frame, f"Player {pid}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[pid%len(colors)], 2)
-	return frame
+		x1, y1, x2, y2 = map(int, [row_data.x1, row_data.y1, row_data.x2, row_data.y2])
+		player_identifier = int(row_data.player_id)
+		color_bgr = slot_colors_bgr[player_identifier % len(slot_colors_bgr)]
+		cv2.rectangle(image_frame, (x1, y1), (x2, y2), color_bgr, 2)
+		cv2.putText(
+			image_frame, f"Player {player_identifier}", (x1, y1 - 10),
+			cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2
+		)
+	return image_frame
 
-def view_tracking_on_video(tracks_df: pd.DataFrame, video_path: Path):
+# ─── Visualization utilities ───────────────────────────────────────────
+def preview_detections_only(video_file_path: Path, detections_dataframe: pandas_lib.DataFrame) -> None:
 	from acquisition.VideoReader import VideoReader
-	video_reader = VideoReader(video_path)
-
-	for frame_ind, frame in video_reader.video_frames_generator(start_frame=0):
-		frame_tracks = tracks_df[tracks_df.frame_ind == frame_ind]
-		overlay = draw_tracking_overlay(frame.copy(), frame_tracks)
-		cv2.imshow("Tracked Detections", overlay)
-		key = cv2.waitKey(0)
-		if key == ord('q'):
+	video_reader = VideoReader(video_file_path)
+	for frame_index, image_frame in video_reader.video_frames_generator():
+		detections_for_frame = detections_dataframe[detections_dataframe.frame_ind == frame_index]
+		image_with_boxes = draw_bounding_boxes(image_frame.copy(), detections_for_frame)
+		cv2.imshow("Raw detections preview", image_with_boxes)
+		if cv2.waitKey(1) == ord("q"):
 			break
 	cv2.destroyAllWindows()
 
-# ─── Main ──────────────────────────────────────────────────────────────
-def main():
-	is_tracking = False
-	is_viewing = True
-	if is_tracking:
-		detections = pd.read_csv(detections_csv_path)
-		tracks = create_tracking_df(detections)
-		tracks.to_csv(tracked_detections_csv_path,index=False)
-		print(f"[INFO] CSV saved → {tracked_detections_csv_path}")
-	else:
-		tracks = pd.read_csv(tracked_detections_csv_path)
-	plot_player_locations(tracks)
+def preview_tracking_overlay(video_file_path: Path, tracking_dataframe: pandas_lib.DataFrame) -> None:
+	from acquisition.VideoReader import VideoReader
+	video_reader = VideoReader(video_file_path)
+	for frame_index, image_frame in video_reader.video_frames_generator():
+		tracking_rows = tracking_dataframe[tracking_dataframe.frame_ind == frame_index]
+		image_with_overlay = draw_tracker_overlay(image_frame.copy(), tracking_rows)
+		cv2.imshow("Kalman tracking", image_with_overlay)
+		if cv2.waitKey(1) == ord("q"):
+			break
+	cv2.destroyAllWindows()
 
-	if is_viewing:
-		from utils.paths import raw_data_path
-		video_path = raw_data_path / "game1_3.mp4"
-		view_tracking_on_video(tracks, video_path)
+# ─── Plotting (x and y center for each player) ────────────────────────
+def plot_player_center_positions(tracking_dataframe: pandas_lib.DataFrame) -> None:
+	for player_identifier in range(4):
+		player_rows = tracking_dataframe[
+			(tracking_dataframe.player_id == player_identifier) &
+			(tracking_dataframe.is_valid)
+		]
+		if player_rows.empty:
+			continue
+		center_dataframe = pandas_lib.DataFrame({
+			"frame_index": player_rows.frame_ind,
+			"x_center": (player_rows.x1 + player_rows.x2) / 2,
+			"y_center": (player_rows.y1 + player_rows.y2) / 2
+		})
+		for coordinate_name in ("x_center", "y_center"):
+			pyplot_lib.figure(figsize=(12, 8))
+			pyplot_lib.plot(center_dataframe.frame_index, center_dataframe[coordinate_name], alpha=0.8)
+			pyplot_lib.xlabel("Frame index")
+			pyplot_lib.ylabel(coordinate_name)
+			pyplot_lib.title(f"Player {player_identifier} – {coordinate_name}")
+			pyplot_lib.grid(True)
+			pyplot_lib.tight_layout()
+			output_png_path = tracked_detections_csv_path.with_suffix(
+				f".player{player_identifier}_{coordinate_name}.png"
+			)
+			pyplot_lib.savefig(output_png_path)
+			pyplot_lib.close()
+			print(f"[INFO] saved → {output_png_path}")
+
+# ─── Core tracking routine ─────────────────────────────────────────────
+def create_tracking_dataframe(detections_dataframe: pandas_lib.DataFrame) -> pandas_lib.DataFrame:
+	total_frames = int(detections_dataframe.frame_ind.max()) + 1
+	trackers_list: list[PlayerTracker] = []
+	output_rows = []
+
+	for current_frame_index in range(total_frames):
+		if current_frame_index % 100 == 0:
+			print(f"[INFO] processing frame #{current_frame_index}")
+
+		frame_detections_matrix = detections_dataframe[
+			detections_dataframe.frame_ind == current_frame_index
+		][["x1", "y1", "x2", "y2"]].values
+
+		current_detections_list = [row for row in frame_detections_matrix]
+
+		# ── Predict new tracker positions
+		for tracker_object in trackers_list:
+			tracker_object.predict()
+
+		# ── Match detections to existing trackers
+		match_pairs, unmatched_detection_indices, _ = match_detections_to_trackers(
+			trackers_list, current_detections_list
+		)
+
+		# ── Update matched trackers
+		for detection_index, tracker_index in match_pairs:
+			trackers_list[tracker_index].update(current_detections_list[detection_index])
+
+		# ── Create trackers for unmatched detections (respect 2 per side)
+		for detection_index in unmatched_detection_indices:
+			detection_bbox = current_detections_list[detection_index]
+			detection_center_side = court_side_sign((
+				(detection_bbox[0] + detection_bbox[2]) / 2,
+				(detection_bbox[1] + detection_bbox[3]) / 2
+			))
+			available_slots = free_slot_identifiers(trackers_list, detection_center_side)
+			if available_slots:
+				new_tracker = PlayerTracker(available_slots[0], detection_bbox)
+				trackers_list.append(new_tracker)
+
+		# ── Remove expired trackers
+		trackers_list = [t for t in trackers_list if not t.is_expired()]
+
+		# ── Snapshot exactly four slots (0,1 top; 2,3 bottom)
+		slot_identifier_to_tracker = {t.slot_identifier: t for t in trackers_list}
+		for slot_identifier in range(4):
+			tracker_object = slot_identifier_to_tracker.get(slot_identifier)
+			if tracker_object is None:
+				# Dummy tracker – missing detection in this frame
+				dummy_tracker = PlayerTracker(slot_identifier, numpy_lib.array([numpy_lib.nan] * 4))
+				dummy_tracker.kalman_filter.x[:4] = numpy_lib.nan
+				tracker_object = dummy_tracker
+			x1_value, y1_value, x2_value, y2_value = tracker_object.current_state_bbox()
+			is_valid_flag = not numpy_lib.isnan(x1_value)
+			output_rows.append([
+				current_frame_index, x1_value, y1_value, x2_value, y2_value,
+				slot_identifier, is_valid_flag
+			])
+
+	return pandas_lib.DataFrame(output_rows, columns=[
+		"frame_ind", "x1", "y1", "x2", "y2", "player_id", "is_valid"
+	])
+
+# ─── Main entry point ──────────────────────────────────────────────────
+def main() -> None:
+	VISUALIZE_DETECTIONS_ONLY	= False
+	GENERATE_NEW_TRACKING_CSV	= False
+	VISUALIZE_TRACKING_OVERLAY	= True
+
+	if VISUALIZE_DETECTIONS_ONLY:
+		detections_dataframe = pandas_lib.read_csv(detections_csv_path)
+		preview_detections_only(raw_data_path / "game1_3.mp4", detections_dataframe)
+		return
+
+	if GENERATE_NEW_TRACKING_CSV:
+		detections_dataframe = pandas_lib.read_csv(detections_csv_path)
+		tracking_dataframe = create_tracking_dataframe(detections_dataframe)
+		tracking_dataframe.to_csv(tracked_detections_csv_path, index=False)
+		print(f"[INFO] tracking CSV saved → {tracked_detections_csv_path}")
+	else:
+		tracking_dataframe = pandas_lib.read_csv(tracked_detections_csv_path)
+
+	plot_player_center_positions(tracking_dataframe)
+
+	if VISUALIZE_TRACKING_OVERLAY:
+		preview_tracking_overlay(raw_data_path / "game1_3.mp4", tracking_dataframe)
 
 if __name__ == "__main__":
 	main()
