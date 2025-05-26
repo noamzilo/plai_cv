@@ -66,7 +66,7 @@ def assign_detections_to_trackers(trackers, detections, iou_threshold=0.1):
 	iou_matrix = np.zeros((len(detections), len(trackers)), dtype=np.float32)
 	for i_det, det in enumerate(detections):
 		for i_tracker, tracker in enumerate(trackers):
-			iou_matrix[i_det, i_tracker] = iou(det, tracker.get_state())
+			iou_matrix[i_det, i_tracker] = iou(det, tracker.get_state().tolist())
 
 	matched_indices = linear_sum_assignment(-iou_matrix)
 	matched_indices = np.array(matched_indices).T
@@ -154,7 +154,7 @@ def main():
 		for sorted_tracker_ind, sorted_tracker in enumerate(sorted_trackers[:4]):
 			x1, y1, x2, y2 = sorted_tracker.get_state()
 			player_id = f"{sorted_tracker_ind}"
-			output_rows.append([frame_ind, int(x1), int(y1), int(x2), int(y2), player_id])
+			output_rows.append([frame_ind, int(x1.item()), int(y1.item()), int(x2.item()), int(y2.item()), player_id])
 
 	# ─── Dump Final Output ─────────────────────────────────────────────────
 	df_out = pd.DataFrame(output_rows, columns=["frame_ind", "x1", "y1", "x2", "y2", "player_id"])
