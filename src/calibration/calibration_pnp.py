@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 from utils.paths import calculated_data_path
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
 # ─── 2-D image points ─────────────────────────────────────────────────
 from calibration.pitch_corners_const import (
@@ -102,13 +103,13 @@ class Camera:
 image_points_2d = [
 	far_left_corner,
 	far_right_corner,
-	net_left_bottom,
-	net_right_bottom,
+	# net_left_bottom,
+	# net_right_bottom,
 	net_center_bottom,
 	close_white_line_center_left_far,
-	close_white_line_center_right_far,
-	close_white_line_center_left_close,
-	close_white_line_center_right_close,
+	# close_white_line_center_right_far,
+	# close_white_line_center_left_close,
+	# close_white_line_center_right_close,
 	net_left_top,
 	net_right_top,
 	net_center_top
@@ -117,13 +118,13 @@ image_points_2d = [
 object_points_3d = [
 	far_left_corner_3d,
 	far_right_corner_3d,
-	net_left_bottom_3d,
-	net_right_bottom_3d,
+	# net_left_bottom_3d,
+	# net_right_bottom_3d,
 	net_center_bottom_3d,
 	close_white_line_center_left_far_3d,
-	close_white_line_center_right_far_3d,
-	close_white_line_center_left_close_3d,
-	close_white_line_center_right_close_3d,
+	# close_white_line_center_right_far_3d,
+	# close_white_line_center_left_close_3d,
+	# close_white_line_center_right_close_3d,
 	net_left_top_3d,
 	net_right_top_3d,
 	net_center_top_3d
@@ -158,6 +159,7 @@ projected = camera.project_points(object_points_3d)
 print("\n[INFO] Reprojected 2D points:")
 for i, pt in enumerate(projected):
 	print(f"  Reprojected: {pt}  ← Original: {image_points_2d[i]}")
+
 # ─── Visualize 2D Keypoints vs Reprojections ──────────────────────────
 assert calculated_data_path.is_dir()
 average_frame_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
@@ -209,15 +211,16 @@ for i, ((x_img, y_img), (x_proj, y_proj)) in enumerate(zip(image_points_2d, proj
 	)
 
 # Show window
-cv2.imshow("2D Points vs Projections (scaled)", points_on_image)
-cv2.waitKey(0)
+plt.figure(figsize=(10, 8))
+cv2.imshow("2D Points vs Projections (scaled)", cv2.cvtColor(points_on_image, cv2.COLOR_BGR2RGB))
+plt.title("2D Points vs Projections (scaled)")
+plt.axis('off')
+plt.show()
 
 # Save to file
 output_path = calculated_data_path / "reprojection_overlay.scaled.png"
 cv2.imwrite(str(output_path), points_on_image)
 print(f"[INFO] Saved reprojection visualization → {output_path}")
-
-
 
 # visualize 3d with plotly
 
@@ -287,7 +290,7 @@ def visualize_3d_scene_plotly(object_points_3d, camera):
 			x=[end[0]], y=[end[1]], z=[end[2]],
 			u=[vec[0]], v=[vec[1]], w=[vec[2]],
 			sizemode="absolute",
-			sizemax=0.2,
+			sizeref=0.2,  # Replaced the invalid 'sizemax' with 'sizeref'
 			anchor="tail",
 			colorscale=[[0, color], [1, color]],
 			showscale=False,
