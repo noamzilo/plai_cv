@@ -12,6 +12,7 @@ close_white_line_center_right_far = np.array([1900, 1624])
 close_white_line_center_right_close = np.array([1900, 1649])
 net_left_top  = np.array([825, 507])
 net_right_top = np.array([2980, 555])
+net_center_top = np.array([1926, 543])
 
 image_width = 3840
 image_height = 2160
