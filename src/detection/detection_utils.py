@@ -49,14 +49,18 @@ def run_detection_on_image(image_path, is_draw=False):
 
 def detect_pitch_corners(image: np.ndarray):
 	# known points, hard coded for now. Corresponds to game 1_3
-	left_bottom_net = np.array([840, 705])
-	left_bottom_right = np.array([2955, 751])
+	net_left_bottom = np.array([840, 705])
+	net_right_bottom = np.array([2955, 751])
 	far_left_corner = np.array([1372, 485])
 	far_right_corner = np.array([2451, 510])
 
 	# inferred by extrapolation: close = net + (net - far)
-	close_left_corner = left_bottom_net + (left_bottom_net - far_left_corner)
-	close_right_corner = left_bottom_right + (left_bottom_right - far_right_corner)
+	# THIS IS WRONG! because of perspective.
+	# the correct way: this exercise is true IN 3D. so infer camera intrinsics from the known pitch edge sizes
+	close_left_corner = net_left_bottom + (net_left_bottom - far_left_corner)
+	close_right_corner = net_right_bottom + (net_right_bottom - far_right_corner)
+
+
 
 	return {
 		"far_left_corner": far_left_corner,
