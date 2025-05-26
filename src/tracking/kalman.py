@@ -90,22 +90,43 @@ def assign_detections_to_trackers(trackers, detections, iou_threshold=0.1):
 
 # ─── Plotting ──────────────────────────────────────────────────────────
 def plot_player_locations(tracking_df):
-	fig, ax = plt.subplots()
+	# Plot x1 positions
+	fig_x, ax_x = plt.subplots(figsize=(12, 8))
 	for player_id in range(4):
-		player_df = tracking_df[tracking_df["player_id"] == str(player_id)]
-		ax.plot(player_df["frame_ind"], player_df["x1"], label=f"Player {player_id} - x1")
-		ax.plot(player_df["frame_ind"], player_df["y1"], label=f"Player {player_id} - y1", linestyle="--")
-
-	ax.set_xlabel("Frame Index")
-	ax.set_ylabel("Position")
-	ax.set_title("x1/y1 Position Over Time per Player")
-	ax.legend()
-	ax.grid(True)
+		player_df = tracking_df[tracking_df["player_id"] == player_id].copy()
+		invalid_mask = (player_df[["x1", "x2", "y1", "y2"]] == 0).all(axis=1)
+		x_center = (player_df["x1"] + player_df["x2"]) / 2
+		x_center[invalid_mask] = np.nan
+		ax_x.plot(player_df["frame_ind"], x_center, label=f"Player {player_id}", alpha=0.6)
+	ax_x.set_xlabel("Frame Index")
+	ax_x.set_ylabel("x Position (center)")
+	ax_x.set_title("x Position Over Time per Player")
+	ax_x.legend()
+	ax_x.grid(True)
 	plt.tight_layout()
-	out_png = tracked_detections_csv_path.with_suffix(".xy1.png")
-	plt.savefig(out_png)
+	out_png_x = tracked_detections_csv_path.with_suffix(".x1.png")
+	plt.savefig(out_png_x)
 	plt.close()
-	print(f"[INFO] x1/y1 plot saved → {out_png}")
+	print(f"[INFO] x1 plot saved → {out_png_x}")
+
+	# Plot y1 positions
+	fig_y, ax_y = plt.subplots(figsize=(12, 8))
+	for player_id in range(4):
+		player_df = tracking_df[tracking_df["player_id"] == player_id].copy()
+		invalid_mask = (player_df[["x1", "x2", "y1", "y2"]] == 0).all(axis=1)
+		y_center = (player_df["y1"] + player_df["y2"]) / 2
+		y_center[invalid_mask] = np.nan
+		ax_y.plot(player_df["frame_ind"], y_center, label=f"Player {player_id}", linestyle="--", alpha=0.6)
+	ax_y.set_xlabel("Frame Index")
+	ax_y.set_ylabel("y Position (center)")
+	ax_y.set_title("y Position Over Time per Player")
+	ax_y.legend()
+	ax_y.grid(True)
+	plt.tight_layout()
+	out_png_y = tracked_detections_csv_path.with_suffix(".y1.png")
+	plt.savefig(out_png_y)
+	plt.close()
+	print(f"[INFO] y1 plot saved → {out_png_y}")
 
 
 def create_tracking_over_detections_df(detections_df):
@@ -162,17 +183,14 @@ def create_tracking_over_detections_df(detections_df):
 def main():
 	print("[INFO] Loading detections CSV …")
 	do_tracking = False
-	save_tracking = not do_tracking
 	if do_tracking:
 		detections_df = pd.read_csv(detections_csv_path)
 		tracking_df = create_tracking_over_detections_df(detections_df)
-	else:
-		tracking_df = pd.read_csv(tracked_detections_csv_path)
-
-	if save_tracking:
 		print("[INFO] Saving final tracked data …")
 		tracking_df.to_csv(tracked_detections_csv_path, index=False)
 		print(f"[INFO] CSV saved → {tracked_detections_csv_path}")
+	else:
+		tracking_df = pd.read_csv(tracked_detections_csv_path)
 
 	plot_player_locations(tracking_df)
 
