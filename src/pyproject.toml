@@ -14,6 +14,7 @@ pandas = "^2.2"
 ultralytics = "^8.3.144"
 scipy = "^1.15.3"
 filterpy = "^1.4.5"
+pyqt5 = "^5.15.11"
 
 [build-system]
 requires = ["poetry-core"]
