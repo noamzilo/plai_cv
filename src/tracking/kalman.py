@@ -238,74 +238,99 @@ def plot_player_center_positions(tracking_dataframe: pandas_lib.DataFrame) -> No
 			pyplot_lib.close()
 			print(f"[INFO] saved → {output_png_path}")
 
-# ─── Core tracking routine ─────────────────────────────────────────────
-def create_tracking_dataframe(detections_dataframe: pandas_lib.DataFrame) -> pandas_lib.DataFrame:
-	total_frames = int(detections_dataframe.frame_ind.max()) + 1
-	trackers_list: list[PlayerTracker] = []
+def update_trackers_for_side(
+	trackers_list: list[PlayerTracker],
+	detections_list: list[numpy_lib.ndarray],
+	slot_offset: int
+) -> list[PlayerTracker]:
+	for tracker in trackers_list:
+		tracker.predict()
+
+	match_pairs, unmatched_detections, _ = match_detections_to_trackers(trackers_list, detections_list)
+
+	for detection_index, tracker_index in match_pairs:
+		trackers_list[tracker_index].update(detections_list[detection_index])
+
+	side = -1 if slot_offset == 0 else 1
+	for detection_index in unmatched_detections:
+		available_slots = free_slot_identifiers(trackers_list, side)
+		if available_slots:
+			new_tracker = PlayerTracker(available_slots[0], detections_list[detection_index])
+			trackers_list.append(new_tracker)
+
+	return [t for t in trackers_list if not t.is_expired()]
+
+def snapshot_trackers_for_side(
+	trackers_list: list[PlayerTracker],
+	current_frame_index: int,
+	expected_slots: list[int]
+) -> list[list]:
+	tracker_by_slot = {t.slot_identifier: t for t in trackers_list}
+	rows = []
+
+	for slot_id in expected_slots:
+		tracker = tracker_by_slot.get(slot_id)
+		if tracker is None:
+			dummy_tracker = PlayerTracker(slot_id, numpy_lib.array([numpy_lib.nan] * 4))
+			dummy_tracker.kalman_filter.x[:4] = numpy_lib.nan
+			tracker = dummy_tracker
+		x1, y1, x2, y2 = tracker.current_state_bbox()
+		is_valid = not numpy_lib.isnan(x1)
+		rows.append([current_frame_index, x1, y1, x2, y2, slot_id, is_valid])
+
+	return rows
+
+def create_tracking_dataframe(
+	detections_dataframe: pandas_lib.DataFrame,
+	start_frame_index: int = 0,
+	end_frame_index_exclusive: int | None = None,
+	frame_interval: int = 1
+) -> pandas_lib.DataFrame:
+	absolute_last_frame_index = int(detections_dataframe.frame_ind.max()) + 1
+	if end_frame_index_exclusive is None:
+		end_frame_index_exclusive = absolute_last_frame_index
+
+	total_frames_to_process = (
+		(end_frame_index_exclusive - start_frame_index + frame_interval - 1)
+		// frame_interval
+	)
+
+	top_trackers_list: list[PlayerTracker] = []
+	bottom_trackers_list: list[PlayerTracker] = []
 	output_rows = []
 
-	for current_frame_index in range(total_frames):
-		if current_frame_index % 100 == 0:
-			print(f"[INFO] processing frame #{current_frame_index}")
+	for processed_frame_counter, current_frame_index in enumerate(
+		range(start_frame_index, end_frame_index_exclusive, frame_interval)
+	):
+		if processed_frame_counter % 100 == 0:
+			print(f"[INFO] processing frame #{current_frame_index} ({processed_frame_counter + 1}/{total_frames_to_process})")
 
-		frame_detections_matrix = detections_dataframe[
+		detections_for_frame = detections_dataframe[
 			detections_dataframe.frame_ind == current_frame_index
 		][["x1", "y1", "x2", "y2"]].values
 
-		current_detections_list = [row for row in frame_detections_matrix]
+		top_detections, bottom_detections = [], []
+		for bbox in detections_for_frame:
+			center_x = (bbox[0] + bbox[2]) / 2
+			center_y = (bbox[1] + bbox[3]) / 2
+			side = court_side_sign((center_x, center_y))
+			(top_detections if side <= 0 else bottom_detections).append(bbox)
 
-		# ── Predict new tracker positions
-		for tracker_object in trackers_list:
-			tracker_object.predict()
+		top_trackers_list = update_trackers_for_side(top_trackers_list, top_detections, slot_offset=0)
+		bottom_trackers_list = update_trackers_for_side(bottom_trackers_list, bottom_detections, slot_offset=2)
 
-		# ── Match detections to existing trackers
-		match_pairs, unmatched_detection_indices, _ = match_detections_to_trackers(
-			trackers_list, current_detections_list
-		)
-
-		# ── Update matched trackers
-		for detection_index, tracker_index in match_pairs:
-			trackers_list[tracker_index].update(current_detections_list[detection_index])
-
-		# ── Create trackers for unmatched detections (respect 2 per side)
-		for detection_index in unmatched_detection_indices:
-			detection_bbox = current_detections_list[detection_index]
-			detection_center_side = court_side_sign((
-				(detection_bbox[0] + detection_bbox[2]) / 2,
-				(detection_bbox[1] + detection_bbox[3]) / 2
-			))
-			available_slots = free_slot_identifiers(trackers_list, detection_center_side)
-			if available_slots:
-				new_tracker = PlayerTracker(available_slots[0], detection_bbox)
-				trackers_list.append(new_tracker)
-
-		# ── Remove expired trackers
-		trackers_list = [t for t in trackers_list if not t.is_expired()]
-
-		# ── Snapshot exactly four slots (0,1 top; 2,3 bottom)
-		slot_identifier_to_tracker = {t.slot_identifier: t for t in trackers_list}
-		for slot_identifier in range(4):
-			tracker_object = slot_identifier_to_tracker.get(slot_identifier)
-			if tracker_object is None:
-				# Dummy tracker – missing detection in this frame
-				dummy_tracker = PlayerTracker(slot_identifier, numpy_lib.array([numpy_lib.nan] * 4))
-				dummy_tracker.kalman_filter.x[:4] = numpy_lib.nan
-				tracker_object = dummy_tracker
-			x1_value, y1_value, x2_value, y2_value = tracker_object.current_state_bbox()
-			is_valid_flag = not numpy_lib.isnan(x1_value)
-			output_rows.append([
-				current_frame_index, x1_value, y1_value, x2_value, y2_value,
-				slot_identifier, is_valid_flag
-			])
+		output_rows.extend(snapshot_trackers_for_side(top_trackers_list, current_frame_index, [0, 1]))
+		output_rows.extend(snapshot_trackers_for_side(bottom_trackers_list, current_frame_index, [2, 3]))
 
 	return pandas_lib.DataFrame(output_rows, columns=[
 		"frame_ind", "x1", "y1", "x2", "y2", "player_id", "is_valid"
 	])
 
+
 # ─── Main entry point ──────────────────────────────────────────────────
 def main() -> None:
 	VISUALIZE_DETECTIONS_ONLY	= False
-	GENERATE_NEW_TRACKING_CSV	= False
+	GENERATE_NEW_TRACKING_CSV	= True
 	is_plot_player_center_positions = False
 	VISUALIZE_TRACKING_OVERLAY	= True
 
@@ -322,7 +347,8 @@ def main() -> None:
 	else:
 		tracking_dataframe = pandas_lib.read_csv(tracked_detections_csv_path)
 
-	plot_player_center_positions(tracking_dataframe)
+	if is_plot_player_center_positions:
+		plot_player_center_positions(tracking_dataframe)
 
 	if VISUALIZE_TRACKING_OVERLAY:
 		preview_tracking_overlay(raw_data_path / "game1_3.mp4", tracking_dataframe)
