@@ -15,21 +15,16 @@ class VideoReader():
 			raise ValueError("_average_frame not yet defined")
 		return self._average_frame
 
-	def video_frames_generator(self, start_frame: int = 0, interval: int = 1, end_frame=-1):
-		# Seek to the start frame directly
+	def video_frames_generator(self, start_frame: int = 0, interval: int = 1, end_frame: int = -1):
 		self.video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-		frame_count = 0
-		
+		curr_frame = start_frame
 		while self.video.isOpened():
 			ret, frame = self.video.read()
 			if not ret:
 				break
-			if frame_count % interval == 0:
-				yield frame
-			frame_count += 1
-			if frame_count % 20 == 0:
-				print(f"video_frames_generator processing frame #{frame_count}")
-			if end_frame > 0 and end_frame < start_frame + interval * frame_count:
+			if (curr_frame - start_frame) % interval == 0:
+				yield curr_frame, frame
+			curr_frame += 1
+			if 0 < end_frame <= curr_frame:
 				break
-
 		self.video.release()
