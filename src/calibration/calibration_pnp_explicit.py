@@ -29,6 +29,75 @@ from calibration.pitch_corners_const import (
 )
 
 # ─── Direct Linear Transform – 3 D→2 D projection ─────────────────────
+
+#	⭾	TABS ONLY – copy / paste exactly
+
+import numpy as np
+import cv2
+from scipy.optimize import least_squares
+
+# ─── Helper – project 3-D → 2-D via 3×4 matrix ──────────────────────────
+def _project_points(projection_matrix_3x4: np.ndarray, world_points_3d: np.ndarray) -> np.ndarray:
+	homog = np.hstack([world_points_3d, np.ones((world_points_3d.shape[0], 1))])
+	proj = (projection_matrix_3x4 @ homog.T).T
+	return proj[:, :2] / proj[:, [2]]
+
+# ─── New constrained solver ─────────────────────────────────────────────
+def compute_projection_matrix_constrained(
+	world_pts_3d: np.ndarray,
+	image_pts_2d: np.ndarray,
+	fixed_camera_x: float = 20.0,
+	camera_y_bounds: tuple[float, float] = (3.0, 7.0),
+	camera_z_bounds: tuple[float, float] = (0.5, 3.0)
+) -> np.ndarray:
+	# Use identity K (or DLT estimate), then fix K during optimisation
+	P_dlt = compute_projection_matrix(world_pts_3d, image_pts_2d)
+	K_init, _, _, _ = decompose_projection_matrix(P_dlt)
+
+	# ── Initial camera pose guess ─────────────────────────────────────
+	camera_center_init = np.array([fixed_camera_x, 5.0, 1.0])  # Initial C = (20, 5, 1)
+
+	# Looking along -x → optical axis = [-1, 0, 0]
+	# Build rotation matrix where columns = camera axes: [right, down, forward]
+	R_init = np.array([
+		[ 0,  0, -1],
+		[ 0, -1,  0],
+		[-1,  0,  0]
+	], dtype=np.float64)
+	rvec_init, _ = cv2.Rodrigues(R_init)
+
+	param0 = np.hstack([rvec_init.ravel(), camera_center_init[1], camera_center_init[2]])
+
+	def residuals(param_vec: np.ndarray) -> np.ndarray:
+		rvec = param_vec[:3]
+		cam_y = param_vec[3]
+		cam_z = param_vec[4]
+		camera_center = np.array([fixed_camera_x, cam_y, cam_z], dtype=np.float64)
+
+		R_mat, _ = cv2.Rodrigues(rvec)
+		t_vec = -R_mat @ camera_center
+
+		P = K_init @ np.hstack([R_mat, t_vec.reshape(3, 1)])
+		reprojected = _project_points(P, world_pts_3d)
+		return (reprojected - image_pts_2d).ravel()
+
+	# Bounds: rvec unbounded; y ∈ [3, 7], z ∈ [0.5, 3.0]
+	lb = np.array([-np.inf, -np.inf, -np.inf, camera_y_bounds[0], camera_z_bounds[0]])
+	ub = np.array([ np.inf,  np.inf,  np.inf, camera_y_bounds[1], camera_z_bounds[1]])
+
+	result = least_squares(residuals, param0, bounds=(lb, ub), method="trf", verbose=0)
+
+	rvec_opt = result.x[:3]
+	cam_y_opt = result.x[3]
+	cam_z_opt = result.x[4]
+	camera_center_opt = np.array([fixed_camera_x, cam_y_opt, cam_z_opt], dtype=np.float64)
+
+	R_opt, _ = cv2.Rodrigues(rvec_opt)
+	t_opt = -R_opt @ camera_center_opt
+	P_opt = K_init @ np.hstack([R_opt, t_opt.reshape(3, 1)])
+
+	return P_opt / P_opt[-1, -1]
+
 def compute_projection_matrix(world_pts, image_pts):
 	num_points = world_pts.shape[0]
 	design_matrix = np.zeros((2 * num_points, 12), dtype=np.float64)
@@ -202,7 +271,8 @@ def main():
 	img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
 	# Compute projection
-	projection_mat = compute_projection_matrix(world_points, image_points)
+	# projection_mat = compute_projection_matrix(world_points, image_points)
+	projection_mat = compute_projection_matrix_constrained(world_points, image_points)
 	intrinsics, rotation, translation, cam_position = decompose_projection_matrix(projection_mat)
 	reprojected_image_points = reproject_points(projection_mat, world_points)
 
@@ -223,7 +293,7 @@ def main():
 		test_points_2d=test_points_2d,
 		test_points_3d=test_points_3d
 	)
-	# plot_3d_scene(world_points, cam_position, rotation)		# Optional 3-D view
+	plot_3d_scene(world_points, cam_position, rotation)		# Optional 3-D view
 
 	# ── Console output ───────────────────────────────────────────
 	np.set_printoptions(precision=4, suppress=True)
