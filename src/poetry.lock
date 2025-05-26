@@ -238,6 +238,22 @@ testing = ["covdefaults (>=2.3)", "coverage (>=7.6.10)", "diff-cover (>=9.2.1)",
 typing = ["typing-extensions (>=4.12.2) ; python_version < \"3.11\""]
 
 [[package]]
+name = "filterpy"
+version = "1.4.5"
+description = "Kalman filtering and optimal estimation library"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "filterpy-1.4.5.zip", hash = "sha256:4f2a4d39e4ea601b9ab42b2db08b5918a9538c168cff1c6895ae26646f3d73b1"},
+]
+
+[package.dependencies]
+matplotlib = "*"
+numpy = "*"
+scipy = "*"
+
+[[package]]
 name = "fonttools"
 version = "4.58.0"
 description = "Tools to manipulate font files"
@@ -1655,4 +1671,4 @@ zstd = ["zstandard (>=0.18.0)"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "de823b4232e8711ded8e6e7567bd57c65b588d94d5e047884c1107f57af2835e"
+content-hash = "e8bdf9869fb66530dc440bc456bcb8d4626fd0d02c03cb3bb40156859475ab6d"

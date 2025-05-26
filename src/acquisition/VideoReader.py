@@ -29,7 +29,7 @@ class VideoReader():
 			frame_count += 1
 			if frame_count % 20 == 0:
 				print(f"video_frames_generator processing frame #{frame_count}")
-			if end_frame < start_frame + interval * frame_count:
+			if end_frame > 0 and end_frame < start_frame + interval * frame_count:
 				break
 
 		self.video.release()

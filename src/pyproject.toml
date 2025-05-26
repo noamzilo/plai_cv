@@ -12,6 +12,8 @@ numpy = "^1.26"
 matplotlib = "^3.8"
 pandas = "^2.2"
 ultralytics = "^8.3.144"
+scipy = "^1.15.3"
+filterpy = "^1.4.5"
 
 [build-system]
 requires = ["poetry-core"]
