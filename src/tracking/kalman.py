@@ -312,8 +312,8 @@ def create_tracking_dataframe(
 		top_detections, bottom_detections = [], []
 		for bbox in detections_for_frame:
 			center_x = (bbox[0] + bbox[2]) / 2
-			center_y = (bbox[1] + bbox[3]) / 2
-			side = court_side_sign((center_x, center_y))
+			bottom_y = bbox[3]
+			side = court_side_sign((center_x, bottom_y))
 			(top_detections if side <= 0 else bottom_detections).append(bbox)
 
 		top_trackers_list = update_trackers_for_side(top_trackers_list, top_detections, slot_offset=0)
