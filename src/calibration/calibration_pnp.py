@@ -25,16 +25,12 @@ class Camera:
 		self._object_points_3d = np.asarray(object_points_3d, dtype=np.float32)
 		self._image_points_2d = np.asarray(image_points_2d, dtype=np.float32)
 
-		self._focal_length = self._image_width
-		self._center_x = self._image_width / 2
-		self._center_y = self._image_height / 2
-
-		self._camera_matrix = np.array([
-			[self._focal_length, 0, self._center_x],
-			[0, self._focal_length, self._center_y],
-			[0, 0, 1]
-		], dtype=np.float64)
-
+		self._camera_matrix = cv2.initCameraMatrix2D(
+			[self._object_points_3d],
+			[self._image_points_2d],
+			(self._image_width, self._image_height),
+			aspectRatio=1.0
+		)
 		self._dist_coeffs = np.zeros((4, 1))	# Assume no distortion
 
 		self._rotation_vector = None
@@ -91,6 +87,10 @@ class Camera:
 			self._camera_matrix,
 			self._dist_coeffs
 		)
+
+		error = np.linalg.norm(self._image_points_2d - projected.reshape(-1, 2), axis=1)
+		print(f"\n[INFO] Reprojection error per point:\n{error}")
+		print(f"[INFO] Mean reprojection error: {np.mean(error)} pixels")
 		return projected.reshape(-1, 2)
 
 # ─── Build Input Points ────────────────────────────────────────────────
@@ -184,7 +184,6 @@ for (x, y) in projected:
 # Show window
 cv2.imshow("2D Points vs Projections (scaled)", points_on_image)
 cv2.waitKey(0)
-cv2.destroyAllWindows()
 
 # Save to file
 output_path = calculated_data_path / "reprojection_overlay.scaled.png"
