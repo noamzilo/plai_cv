@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 import base64
 import io
-import plotly.io as pio
+
 
 
 from utils.paths import calculated_data_path
@@ -28,6 +28,7 @@ from calibration.pitch_corners_const import (
 	image_width, image_height
 )
 
+# ─── Direct Linear Transform – 3 D→2 D projection ─────────────────────
 def compute_projection_matrix(world_pts, image_pts):
 	num_points = world_pts.shape[0]
 	design_matrix = np.zeros((2 * num_points, 12), dtype=np.float64)
@@ -49,6 +50,7 @@ def compute_projection_matrix(world_pts, image_pts):
 	proj_matrix = vh_matrix[-1].reshape(3, 4)
 	return proj_matrix / proj_matrix[-1, -1]
 
+# ─── Decompose P = K [R | t] ───────────────────────────────────────────
 def decompose_projection_matrix(proj_matrix_3x4):
 	camera_matrix_3x3 = proj_matrix_3x4[:, :3]
 
@@ -71,60 +73,71 @@ def decompose_projection_matrix(proj_matrix_3x4):
 
 	return intrinsic_matrix, rotation_matrix, translation_vector, camera_position_world
 
+# ─── Project 3 D points via 3 × 4 matrix ──────────────────────────────
 def reproject_points(proj_matrix_3x4, world_pts):
 	homogeneous_world_pts = np.hstack([world_pts, np.ones((world_pts.shape[0], 1))])
 	projected = (proj_matrix_3x4 @ homogeneous_world_pts.T).T
 	return projected[:, :2] / projected[:, [2]]
 
-def plot_2d_correspondences(img_rgb, gt_2d_pts, reprojected_pts):
-	# Convert numpy array to base64 encoded image
-	pil_img = Image.fromarray(img_rgb)
-	buffer = io.BytesIO()
-	pil_img.save(buffer, format="PNG")
-	img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-	img_src = f"data:image/png;base64,{img_str}"
+# ─── 2-D diagnostic plot in an OpenCV window ──────────────────────────
+def plot_2d_correspondences_opencv(
+	image_rgb: np.ndarray,
+	ground_truth_points_2d: np.ndarray,
+	reprojected_points_2d: np.ndarray,
+	test_points_2d: np.ndarray | None = None,
+	test_points_3d: np.ndarray | None = None
+):
+	assert image_rgb.ndim == 3 and image_rgb.shape[2] == 3
+	assert ground_truth_points_2d.shape == reprojected_points_2d.shape
+	assert ground_truth_points_2d.shape[1] == 2
 
-	fig = go.Figure()
+	image_copy = image_rgb.copy()
 
-	fig.add_layout_image(
-		dict(
-			source=img_src,
-			xref="x", yref="y",
-			x=0, y=0,
-			sizex=image_width, sizey=image_height,
-			sizing="stretch", layer="below"
+	# ── Ground-truth vs reprojection ────────────────────────────────
+	for point_index in range(len(ground_truth_points_2d)):
+		x_gt, y_gt = map(int, ground_truth_points_2d[point_index])
+		x_rp, y_rp = map(int, reprojected_points_2d[point_index])
+
+		# Green – ground truth
+		cv2.drawMarker(
+			image_copy, (x_gt, y_gt),
+			color=(0, 255, 0), markerType=cv2.MARKER_CROSS,
+			markerSize=10, thickness=2
 		)
-	)
-	fig.update_xaxes(visible=False, range=[0, image_width])
-	fig.update_yaxes(visible=False, range=[image_height, 0])
 
-	fig.add_trace(go.Scatter(
-		x=gt_2d_pts[:, 0], y=gt_2d_pts[:, 1],
-		mode="markers", name="Ground Truth",
-		marker=dict(symbol="x", size=14, color="green")
-	))
-	fig.add_trace(go.Scatter(
-		x=reprojected_pts[:, 0], y=reprojected_pts[:, 1],
-		mode="markers", name="Reprojected",
-		marker=dict(symbol="x", size=14, color="blue")
-	))
+		# Blue – reprojected
+		cv2.drawMarker(
+			image_copy, (x_rp, y_rp),
+			color=(255, 0, 0), markerType=cv2.MARKER_CROSS,
+			markerSize=10, thickness=2
+		)
 
-	for i, (orig, proj) in enumerate(zip(gt_2d_pts, reprojected_pts)):
-		fig.add_trace(go.Scatter(
-			x=[orig[0], proj[0]],
-			y=[orig[1], proj[1]],
-			mode="lines", line=dict(color="red"),
-			showlegend=False
-		))
+		# Red line between them
+		cv2.line(image_copy, (x_gt, y_gt), (x_rp, y_rp), color=(0, 0, 255), thickness=1)
 
-	fig.update_layout(
-		width=image_width,
-		height=image_height,
-		title="2D Correspondences: Green=Ground Truth, Blue=Reprojected"
-	)
+	# ── Extra test points (magenta) ────────────────────────────────
+	if test_points_2d is not None and test_points_3d is not None:
+		for point_index in range(len(test_points_2d)):
+			x_tp, y_tp = map(int, test_points_2d[point_index])
+			cv2.drawMarker(
+				image_copy, (x_tp, y_tp),
+				color=(255, 0, 255), markerType=cv2.MARKER_CROSS,
+				markerSize=12, thickness=2
+			)
+			label_text = f"{test_points_3d[point_index][0]:.2f},{test_points_3d[point_index][1]:.2f},{test_points_3d[point_index][2]:.2f}"
+			cv2.putText(
+				image_copy, label_text,
+				(x_tp + 5, y_tp - 5),
+				fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
+				color=(255, 0, 255), thickness=1, lineType=cv2.LINE_AA
+			)
 
-	fig.show()
+	cv2.namedWindow("2D Correspondences", cv2.WINDOW_NORMAL)
+	cv2.imshow("2D Correspondences", image_copy)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
 
+# ─── Optional Plotly 3-D scene ────────────────────────────────────────
 def plot_3d_scene(world_pts, cam_position, cam_rotation):
 	fig = go.Figure()
 
@@ -163,7 +176,9 @@ def plot_3d_scene(world_pts, cam_position, cam_rotation):
 	)
 	fig.show()
 
+# ─── Main entrypoint ────────────────────────────────────────────────
 def main():
+	# Known correspondences
 	world_points = np.array([
 		far_left_corner_3d, far_right_corner_3d,
 		net_left_bottom_3d, net_right_bottom_3d, net_center_bottom_3d,
@@ -180,18 +195,37 @@ def main():
 		net_left_top, net_right_top, net_center_top
 	], dtype=np.float64)
 
+	# Load reference frame
 	average_frame_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
 	img_bgr = cv2.imread(str(average_frame_path))
 	assert img_bgr is not None, f"Image not found: {average_frame_path}"
 	img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
+	# Compute projection
 	projection_mat = compute_projection_matrix(world_points, image_points)
 	intrinsics, rotation, translation, cam_position = decompose_projection_matrix(projection_mat)
 	reprojected_image_points = reproject_points(projection_mat, world_points)
 
-	plot_2d_correspondences(img_rgb, image_points, reprojected_image_points)
-	plot_3d_scene(world_points, cam_position, rotation)
+	# ── Define EXTRA test 3-D points ──────────────────────────────
+	test_points_3d = np.array([
+		(net_left_top_3d + net_center_top_3d) / 2.0,			# Midpoint left-top ↔ center-top
+		(net_center_top_3d + net_right_top_3d) / 2.0,			# Midpoint center-top ↔ right-top
+		np.array([5.0, 10.0, 1.0]),							# Over the net center (1 m high)
+		np.array([5.0, 12.0, 1.0])							# Two metres behind the net, 1 m high
+	], dtype=np.float64)
+	test_points_2d = reproject_points(projection_mat, test_points_3d)
 
+	# ── 2-D diagnostics including test points ────────────────────
+	plot_2d_correspondences_opencv(
+		img_rgb,
+		image_points,
+		reprojected_image_points,
+		test_points_2d=test_points_2d,
+		test_points_3d=test_points_3d
+	)
+	# plot_3d_scene(world_points, cam_position, rotation)		# Optional 3-D view
+
+	# ── Console output ───────────────────────────────────────────
 	np.set_printoptions(precision=4, suppress=True)
 	print("\nCamera Intrinsics (K):")
 	print(intrinsics)
