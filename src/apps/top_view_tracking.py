@@ -79,60 +79,30 @@ player_color_array = np.array(
 	dtype=np.uint8,
 )
 
-
-# ─── Affine-only homography (pitch↔image) ─────────────────────────────
-class PitchHomography:
-	def __init__(
-			self,
-			pitch_2d_corners_4x2: np.ndarray,
-			img_2d_corners_4x2: np.ndarray,
-	):
-		self.homography_3x3, _ = cv2.findHomography(
-			pitch_2d_corners_4x2,
-			img_2d_corners_4x2,
-			method=cv2.RANSAC,
-			ransacReprojThreshold=3.0,
-		)
-		self.inv_homography_3x3 = np.linalg.inv(self.homography_3x3)
-
-	def image_to_pitch_batch(
-			self,
-			img_xy_batch: np.ndarray,
-	) -> np.ndarray:
-		return self._apply_homography(
-			img_xy_batch,
-			self.inv_homography_3x3,
-		)
-
-	def pitch_to_image_batch(
-			self,
-			pitch_xy_batch: np.ndarray,
-	) -> np.ndarray:
-		return self._apply_homography(
-			pitch_xy_batch,
-			self.homography_3x3,
-		)
-
-	def _apply_homography(
-			self,
-			xy_batch: np.ndarray,
-			homography: np.ndarray,
-	) -> np.ndarray:
-		if len(xy_batch.shape) == 1:
-			xy_batch = xy_batch[np.newaxis, :]
-		n = xy_batch.shape[0]
-		homo = np.hstack([
-			xy_batch,
-			np.ones((n, 1), dtype=np.float32),
-		])
-		transformed = (homography @ homo.T).T
-		return transformed[:, :2] / transformed[:, 2:3]
-
 # ─── 2-D top-view pitch canvas ────────────────────────────────────────
 class Pitch2d:
-	def __init__(self, length_m=20.0, width_m=10.0, canvas_size_px=pitch_canvas_base_size):
+	def __init__(
+			self,
+			length_m=20.0,
+			width_m=10.0,
+			canvas_size_px=pitch_canvas_base_size,
+			pitch_2d_corners_4x2: np.ndarray = None,
+			img_2d_corners_4x2: np.ndarray = None,
+	):
 		self.len_m, self.wid_m = length_m, width_m
 		self.base_w_px, self.base_h_px = canvas_size_px
+
+		if pitch_2d_corners_4x2 is not None and img_2d_corners_4x2 is not None:
+			self.homography_3x3, _ = cv2.findHomography(
+				pitch_2d_corners_4x2,
+				img_2d_corners_4x2,
+				method=cv2.RANSAC,
+				ransacReprojThreshold=3.0,
+			)
+			self.inv_homography_3x3 = np.linalg.inv(self.homography_3x3)
+		else:
+			self.homography_3x3 = None
+			self.inv_homography_3x3 = None
 
 	def blank_canvas(self) -> np.ndarray:
 		img = np.zeros((self.base_h_px, self.base_w_px, 3), np.uint8)
@@ -145,17 +115,44 @@ class Pitch2d:
 		cy = int((1.0 - y / self.wid_m) * self.base_h_px)
 		return cx, cy
 
+	def image_to_pitch_batch(self, img_xy_batch: np.ndarray) -> np.ndarray:
+		return self._apply_homography(img_xy_batch, self.inv_homography_3x3)
+
+	def pitch_to_image_batch(self, pitch_xy_batch: np.ndarray) -> np.ndarray:
+		return self._apply_homography(pitch_xy_batch, self.homography_3x3)
+
+	def _apply_homography(self, xy_batch: np.ndarray, homography: np.ndarray) -> np.ndarray:
+		if homography is None:
+			raise ValueError("Homography has not been initialized.")
+		if len(xy_batch.shape) == 1:
+			xy_batch = xy_batch[np.newaxis, :]
+		n = xy_batch.shape[0]
+		homo = np.hstack([xy_batch, np.ones((n, 1), dtype=np.float32)])
+		transformed = (homography @ homo.T).T
+		return transformed[:, :2] / transformed[:, 2:3]
 
 class PitchTrackerVisualizer:
-	def __init__(self, video_path: Path, detections_dataframe: pd.DataFrame, homography: PitchHomography):
+	def __init__(
+			self,
+			video_path: Path,
+			detections_dataframe: pd.DataFrame,
+			pitch_2d_corners_4x2: np.ndarray,
+			img_2d_corners_4x2: np.ndarray,
+	):
 		self.video_path = video_path
 		self.detections_df = detections_dataframe
-		self.homography = homography
-		self.pitch_converter = Pitch2d()
+		self.pitch_converter = Pitch2d(
+			pitch_2d_corners_4x2=pitch_2d_corners_4x2,
+			img_2d_corners_4x2=img_2d_corners_4x2,
+		)
 		self.base_canvas = self.pitch_converter.blank_canvas()
 		self.video_reader = VideoReader(video_path)
 
-	def draw_pitch_players(self, pitch_canvas: np.ndarray, players_dict: dict[int, tuple[float, float]]) -> np.ndarray:
+	def draw_pitch_players(
+			self,
+			pitch_canvas: np.ndarray,
+			players_dict: dict[int, tuple[float, float]],
+	) -> np.ndarray:
 		out = pitch_canvas.copy()
 		for pid, (px, py) in players_dict.items():
 			if np.isnan(px):
@@ -164,7 +161,13 @@ class PitchTrackerVisualizer:
 			color = player_color_array[pid % len(player_color_array)].tolist()
 			cv2.circle(out, (cx, cy), 6, color, -1)
 			cv2.putText(
-				out, f"P{pid} ({px:.1f},{py:.1f})", (cx + 8, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
+				out,
+				f"P{pid} ({px:.1f},{py:.1f})",
+				(cx + 8, cy - 8),
+				cv2.FONT_HERSHEY_SIMPLEX,
+				0.5,
+				color,
+				1,
 				cv2.LINE_AA,
 			)
 		return out
@@ -178,7 +181,7 @@ class PitchTrackerVisualizer:
 			detections_x = ((ind_detections.x1 + ind_detections.x2) / 2).to_numpy(np.float32)
 			detections_y = ind_detections.y2.to_numpy(np.float32)
 			detections_xy = np.stack([detections_x, detections_y], axis=1)
-			pitch_xy = self.homography.image_to_pitch_batch(detections_xy)
+			pitch_xy = self.pitch_converter.image_to_pitch_batch(detections_xy)
 			player_ids = ind_detections.player_id.to_numpy(np.int32)
 			valid_mask = ind_detections.is_valid.to_numpy(bool)
 
@@ -218,7 +221,7 @@ def main() -> None:
 	# tacked_detections_df = pd.read_csv(
 	# 	tracked_detections_csv_path,
 	# )  # frame_ind,x1,y1,x2,y2,player_id,is_valid
-	pitch_homography = PitchHomography(
+	pitch2d = Pitch2d(
 		pitch_2d_corners_4x2=np.stack(
 			[
 				far_left_corner_3d[:2],
@@ -236,6 +239,7 @@ def main() -> None:
 			],
 		),
 	)
+
 	# video_path = raw_data_path / "game1_3.mp4"
 	# visualizer = PitchTrackerVisualizer(
 	# 	video_path,
@@ -290,7 +294,7 @@ def main() -> None:
 	]
 
 	# ─── Project and Draw ─────────────────────────────────────────────────────────────
-	pitch_coords = pitch_homography.image_to_pitch_batch(np.array(list(named_points.values())))
+	pitch_coords = pitch2d.image_to_pitch_batch(np.array(list(named_points.values())))
 	for name, pitch_coord, color in zip(named_points.keys(), pitch_coords, colors_bgr):
 		# Map pitch XY to image
 		x_pitch, y_pitch = pitch_coord[0:2].flatten()
