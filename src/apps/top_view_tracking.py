@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+#	⭾	TABS ONLY – copy / paste exactly
+
+import numpy as np
+import pandas as pd
+import cv2
+from pathlib import Path
+
+# ─── Project-specific paths ───────────────────────────────────────────
+from utils.paths import raw_data_path, tracked_detections_csv_path
+from acquisition.VideoReader import VideoReader
+
+# ─── Display constants ────────────────────────────────────────────────
+IMAGE_SCALE_FACTOR			= 0.25		# show camera view at 25 %
+PITCH_CANVAS_BASE_SIZE		= (600, 300)	# (width, height) before scaling to match image
+
+# ─── Player colours ───────────────────────────────────────────────────
+PLAYER_COLOURS_BGR = [
+	(255,   0,   0),	# Player 0 – Red
+	(  0, 255,   0),	# Player 1 – Green
+	(  0,   0, 255),	# Player 2 – Blue
+	(255, 255,   0)		# Player 3 – Cyan
+]
+PLAYER_COLOUR_ARRAY = np.array(PLAYER_COLOURS_BGR, dtype=np.uint8)
+
+# ─── Affine-only homography (pitch↔image) ─────────────────────────────
+class PitchHomography:
+	def __init__(self):
+		pitch_pts_m	= np.array([[0, 0], [0, 10], [10, 0], [10, 10]], np.float32)
+		img_pts_px	= np.array([[1372, 485], [2451, 510], [840, 705], [2955, 751]], np.float32)
+
+		self.affine_2x3, _ = cv2.estimateAffine2D(pitch_pts_m, img_pts_px, method=cv2.RANSAC, ransacReprojThreshold=3.0)
+
+		self.inv_affine_3x3		= np.eye(3, dtype=np.float32)
+		self.inv_affine_3x3[:2, :3] = self.affine_2x3
+		self.inv_affine_3x3		= np.linalg.inv(self.inv_affine_3x3)
+
+	def image_to_pitch_batch(self, img_xy_batch: np.ndarray) -> np.ndarray:
+		n		= img_xy_batch.shape[0]
+		homo	= np.hstack([img_xy_batch, np.ones((n, 1), np.float32)])
+		pitch	= (self.inv_affine_3x3 @ homo.T).T
+		return pitch[:, :2] / pitch[:, 2:3]					# (n, 2) in metres
+
+	def pitch_to_image_batch(self, pitch_xy_batch: np.ndarray) -> np.ndarray:
+		n		= pitch_xy_batch.shape[0]
+		homo	= np.hstack([pitch_xy_batch, np.ones((n, 1), np.float32)])
+		img		= (self.affine_2x3 @ homo.T).T
+		return img.astype(np.float32)						# (n, 2) pixels
+
+# ─── 2-D top-view pitch canvas ────────────────────────────────────────
+class Pitch2d:
+	def __init__(self, length_m=20.0, width_m=10.0, canvas_size_px=PITCH_CANVAS_BASE_SIZE):
+		self.len_m, self.wid_m			= length_m, width_m
+		self.base_w_px, self.base_h_px	= canvas_size_px
+
+	def blank_canvas(self) -> np.ndarray:
+		img = np.zeros((self.base_h_px, self.base_w_px, 3), np.uint8)
+		cv2.rectangle(img, (0, 0), (self.base_w_px - 1, self.base_h_px - 1), (255, 255, 255), 2)
+		return img
+
+	def pitch_to_canvas(self, pitch_xy_m: tuple[float, float]) -> tuple[int, int]:
+		x, y = pitch_xy_m
+		cx = int((x / self.len_m) * self.base_w_px)
+		cy = int((1.0 - y / self.wid_m) * self.base_h_px)
+		return cx, cy
+
+def draw_pitch_players(pitch_canvas: np.ndarray, pitch_converter: Pitch2d, players_dict: dict[int, tuple[float, float]]) -> np.ndarray:
+	out = pitch_canvas.copy()
+	for pid, (px, py) in players_dict.items():
+		if np.isnan(px):
+			continue
+		cx, cy = pitch_converter.pitch_to_canvas((px, py))
+		colour = PLAYER_COLOUR_ARRAY[pid % len(PLAYER_COLOUR_ARRAY)].tolist()
+		cv2.circle(out, (cx, cy), 6, colour, -1)
+		label = f"P{pid} ({px:.1f},{py:.1f})"
+		cv2.putText(out, label, (cx + 8, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+	return out
+
+# ─── Main overlay loop ────────────────────────────────────────────────
+def preview_tracking_overlay(video_path: Path, csv_df: pd.DataFrame, homography: PitchHomography) -> None:
+	video_reader			= VideoReader(video_path)
+	pitch_converter			= Pitch2d()
+	base_pitch_canvas		= pitch_converter.blank_canvas()
+
+	for frame_idx, full_frame in video_reader.video_frames_generator():
+		rows = csv_df[csv_df.frame_ind == frame_idx]
+		if rows.empty:
+			continue
+
+		# ── Compute centers & convert to pitch space ─────────────────
+		cx	= ((rows.x1 + rows.x2) / 2).to_numpy(np.float32)
+		cy	= ((rows.y1 + rows.y2) / 2).to_numpy(np.float32)
+		img_centers = np.stack([cx, cy], axis=1)						# (N, 2)
+		pitch_xy	= homography.image_to_pitch_batch(img_centers)		# (N, 2)
+
+		player_ids	= rows.player_id.to_numpy(np.int32)
+		valid_mask	= rows.is_valid.to_numpy(bool)
+
+		# ── Build dict for pitch rendering ───────────────────────────
+		player_pitch_dict = {int(pid): (float(px), float(py)) for pid, (px, py), v in zip(player_ids, pitch_xy, valid_mask) if v}
+
+		# ── Draw scaled camera view ─────────────────────────────────
+		scaled_h = int(full_frame.shape[0] * IMAGE_SCALE_FACTOR)
+		scaled_w = int(full_frame.shape[1] * IMAGE_SCALE_FACTOR)
+		scaled_frame = cv2.resize(full_frame, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+
+		for pid, (x1, y1, x2, y2), (icx, icy), v in zip(player_ids, rows[["x1", "y1", "x2", "y2"]].values, img_centers, valid_mask):
+			if not v:
+				continue
+			col = PLAYER_COLOUR_ARRAY[pid % len(PLAYER_COLOUR_ARRAY)].tolist()
+			# scale bbox coords
+			sx1, sy1, sx2, sy2 = [int(c * IMAGE_SCALE_FACTOR) for c in (x1, y1, x2, y2)]
+			cv2.rectangle(scaled_frame, (sx1, sy1), (sx2, sy2), col, 2)
+			cv2.putText(scaled_frame, f"P{pid}", (sx1, sy1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
+
+		# ── Prepare pitch canvas with players ───────────────────────
+		pitch_image = draw_pitch_players(base_pitch_canvas, pitch_converter, player_pitch_dict)
+
+		# resize pitch to same height as scaled camera view
+		pitch_h, pitch_w = pitch_image.shape[:2]
+		target_pitch_h = scaled_h
+		target_pitch_w = int(pitch_w * (target_pitch_h / pitch_h))
+		pitch_resized = cv2.resize(pitch_image, (target_pitch_w, target_pitch_h), interpolation=cv2.INTER_LINEAR)
+
+		# ── Concatenate side-by-side (camera | pitch) ───────────────
+		combined = np.hstack([scaled_frame, pitch_resized])
+
+		cv2.imshow("Pitch Tracking (25 % camera + top view)", combined)
+		if cv2.waitKey(1) == ord("q"):
+			break
+
+	cv2.destroyAllWindows()
+
+# ─── Entry point ──────────────────────────────────────────────────────
+def main() -> None:
+	csv_df			= pd.read_csv(tracked_detections_csv_path)	# must contain frame_ind,x1,y1,x2,y2,player_id,is_valid
+	homography		= PitchHomography()
+	preview_tracking_overlay(raw_data_path / "game1_3.mp4", csv_df, homography)
+
+if __name__ == "__main__":
+	main()
