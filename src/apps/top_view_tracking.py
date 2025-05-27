@@ -258,35 +258,35 @@ def main() -> None:
 	# ─── Points to Project ────────────────────────────────────────────────────────────
 	named_points = OrderedDict(
 		[
+			("deadzone0", np.array([0, 1155])),
+			("deadzone1", np.array([0, 2159])),
+			("deadzone2", np.array([3839, 2159])),
+			("deadzone3", np.array([3839, 1174])),
+			("far_right_corner", far_right_corner),
 			("net_left_bottom", net_left_bottom),
 			("net_right_bottom", net_right_bottom),
 			("net_center_bottom", net_center_bottom),
 			("far_left_corner", far_left_corner),
-			("far_right_corner", far_right_corner),
 			("close_white_line_center_left_far", close_white_line_center_left_far),
 			("close_white_line_center_left_close", close_white_line_center_left_close),
 			("close_white_line_center_right_far", close_white_line_center_right_far),
 			("close_white_line_center_right_close", close_white_line_center_right_close),
-			("manual_0_1155", np.array([0, 1155])),
-			("manual_0_2159", np.array([0, 2159])),
-			("manual_3839_2159", np.array([3839, 2159])),
-			("manual_3839_1174", np.array([3839, 1174])),
 		]
 	)
 
 	colors_bgr = [
-		(255,   0,   0),	# Red
-		(0,   255,   0),	# Green
-		(0,     0, 255),	# Blue
-		(255, 255,   0),	# Cyan
-		(255,   0, 255),	# Magenta
-		(0,   255, 255),	# Yellow
-		(128, 128, 255),	# Light pink
-		(128, 255, 128),	# Light green
 		(255, 128, 128),	# Light blue
 		(200, 200, 200),	# Gray
 		(100, 200, 100),
 		(200, 100, 100),
+		(255,   0, 255),	# Magenta
+		(255,   0,   0),	# Red
+		(0,   255,   0),	# Green
+		(0,     0, 255),	# Blue
+		(255, 255,   0),	# Cyan
+		(0,   255, 255),	# Yellow
+		(128, 128, 255),	# Light pink
+		(128, 255, 128),	# Light green
 	]
 
 	# ─── Project and Draw ─────────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ def main() -> None:
 		buffered_x = x_img + buffer
 		buffered_y = y_img + buffer
 
-		if 0 <= x_img < output_width and 0 <= y_img < output_height:
+		if 0 <= x_img < output_width + buffer and 0 <= y_img < output_height + buffer:
 			cv2.circle(buffered_output_image, (buffered_x, buffered_y), 4, color, -1)
 			cv2.putText(buffered_output_image, name, (buffered_x + 5, buffered_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
 				color, 1)
