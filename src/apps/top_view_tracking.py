@@ -10,6 +10,11 @@ from pathlib import Path
 from utils.paths import raw_data_path, tracked_detections_csv_path
 from acquisition.VideoReader import VideoReader
 
+
+from calibration.pitch_keypoints_3d import far_left_corner_3d, far_right_corner_3d, net_left_bottom_3d, net_right_bottom_3d
+from calibration.pitch_corners_const import far_left_corner, far_right_corner, net_left_bottom, net_right_bottom
+
+
 # ─── Display constants ────────────────────────────────────────────────
 IMAGE_SCALE_FACTOR			= 0.25		# show camera view at 25 %
 PITCH_CANVAS_BASE_SIZE		= (600, 300)	# (width, height) before scaling to match image
@@ -25,15 +30,24 @@ PLAYER_COLOUR_ARRAY = np.array(PLAYER_COLOURS_BGR, dtype=np.uint8)
 
 # ─── Affine-only homography (pitch↔image) ─────────────────────────────
 class PitchHomography:
-	def __init__(self):
-		pitch_pts_m	= np.array([[0, 0], [0, 10], [10, 0], [10, 10]], np.float32)
-		img_pts_px	= np.array([[1372, 485], [2451, 510], [840, 705], [2955, 751]], np.float32)
+	def __init__(
+			self,
+			pitch_2d_corners_4x2,
+			img_2d_corners_4x2
+	):
+		self.affine_2x3, _ = cv2.estimateAffine2D(
+			pitch_2d_corners_4x2,
+			img_2d_corners_4x2,
+			method=cv2.RANSAC,
+			ransacReprojThreshold=3.0
+		)
 
-		self.affine_2x3, _ = cv2.estimateAffine2D(pitch_pts_m, img_pts_px, method=cv2.RANSAC, ransacReprojThreshold=3.0)
-
-		self.inv_affine_3x3		= np.eye(3, dtype=np.float32)
-		self.inv_affine_3x3[:2, :3] = self.affine_2x3
-		self.inv_affine_3x3		= np.linalg.inv(self.inv_affine_3x3)
+		inv_affine_3x3	= np.eye(
+			N=3,
+			dtype=np.float32
+		)
+		inv_affine_3x3[:2, :3] = self.affine_2x3
+		self.inv_affine_3x3		= np.linalg.inv(inv_affine_3x3)
 
 	def image_to_pitch_batch(self, img_xy_batch: np.ndarray) -> np.ndarray:
 		n		= img_xy_batch.shape[0]
@@ -133,9 +147,23 @@ def preview_tracking_overlay(video_path: Path, csv_df: pd.DataFrame, homography:
 
 # ─── Entry point ──────────────────────────────────────────────────────
 def main() -> None:
-	csv_df			= pd.read_csv(tracked_detections_csv_path)	# must contain frame_ind,x1,y1,x2,y2,player_id,is_valid
-	homography		= PitchHomography()
-	preview_tracking_overlay(raw_data_path / "game1_3.mp4", csv_df, homography)
+	tacked_detections_df = pd.read_csv(tracked_detections_csv_path)	# frame_ind,x1,y1,x2,y2,player_id,is_valid
+	pitch_homography  = PitchHomography(
+		pitch_2d_corners_4x2=np.stack([
+			far_left_corner_3d[:2],
+			far_right_corner_3d[:2],
+			net_right_bottom_3d[:2],
+			net_left_bottom_3d[:2],
+		]),
+		img_2d_corners_4x2=np.stack([
+			far_left_corner,
+			far_right_corner,
+			net_right_bottom,
+			net_left_bottom,
+		])
+	)
+	video_path = raw_data_path / "game1_3.mp4"
+	preview_tracking_overlay(video_path, tacked_detections_df, pitch_homography)
 
 if __name__ == "__main__":
 	main()
