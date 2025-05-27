@@ -87,7 +87,11 @@ class PitchTrackerVisualizer:
 		self.base_canvas		= self.pitch_converter.blank_canvas()
 		self.video_reader		= VideoReader(video_path)
 
-	def draw_pitch_players(self, pitch_canvas: np.ndarray, players_dict: dict[int, tuple[float, float]]) -> np.ndarray:
+	def draw_pitch_players(
+			self,
+			pitch_canvas: np.ndarray,
+			players_dict: dict[int, tuple[float, float]]
+	) -> np.ndarray:
 		out = pitch_canvas.copy()
 		for pid, (px, py) in players_dict.items():
 			if np.isnan(px):
