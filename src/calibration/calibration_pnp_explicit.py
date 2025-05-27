@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 import base64
 import io
-
+from typing import Tuple
 
 
 from utils.paths import calculated_data_path
@@ -49,7 +49,7 @@ def compute_projection_matrix_constrained(
 	fixed_camera_x: float = 20.0,
 	camera_y_bounds: tuple[float, float] = (3.0, 7.0),
 	camera_z_bounds: tuple[float, float] = (0.5, 3.0)
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
 	# Use identity K (or DLT estimate), then fix K during optimisation
 	P_dlt = compute_projection_matrix(world_pts_3d, image_pts_2d)
 	K_init, _, _, _ = decompose_projection_matrix(P_dlt)
@@ -96,7 +96,7 @@ def compute_projection_matrix_constrained(
 	t_opt = -R_opt @ camera_center_opt
 	P_opt = K_init @ np.hstack([R_opt, t_opt.reshape(3, 1)])
 
-	return P_opt / P_opt[-1, -1]
+	return P_opt / P_opt[-1, -1], camera_center_opt
 
 def compute_projection_matrix(world_pts, image_pts):
 	num_points = world_pts.shape[0]
@@ -272,15 +272,15 @@ def main():
 
 	# Compute projection
 	# projection_mat = compute_projection_matrix(world_points, image_points)
-	projection_mat = compute_projection_matrix_constrained(world_points, image_points)
-	intrinsics, rotation, translation, cam_position = decompose_projection_matrix(projection_mat)
+	projection_mat, camera_center = compute_projection_matrix_constrained(world_points, image_points)
+	intrinsics, rotation, translation, _ = decompose_projection_matrix(projection_mat)
 	reprojected_image_points = reproject_points(projection_mat, world_points)
 
 	# ── Define EXTRA test 3-D points ──────────────────────────────
 	test_points_3d = np.array([
 		(net_left_top_3d + net_center_top_3d) / 2.0,			# Midpoint left-top ↔ center-top
 		(net_center_top_3d + net_right_top_3d) / 2.0,			# Midpoint center-top ↔ right-top
-		np.array([5.0, 10.0, 1.0]),							# Over the net center (1 m high)
+		np.array([10,., 10.0, 1.0]),							# Over the net center (1 m high)
 		np.array([5.0, 12.0, 1.0])							# Two metres behind the net, 1 m high
 	], dtype=np.float64)
 	test_points_2d = reproject_points(projection_mat, test_points_3d)
@@ -293,7 +293,7 @@ def main():
 		test_points_2d=test_points_2d,
 		test_points_3d=test_points_3d
 	)
-	plot_3d_scene(world_points, cam_position, rotation)		# Optional 3-D view
+	plot_3d_scene(world_points, camera_center, rotation)		# Optional 3-D view
 
 	# ── Console output ───────────────────────────────────────────
 	np.set_printoptions(precision=4, suppress=True)
@@ -304,7 +304,7 @@ def main():
 	print("\nCamera Translation Vector (t):")
 	print(translation)
 	print("\nCamera World Position:")
-	print(cam_position)
+	print("Final Camera Center:", camera_center)
 
 if __name__ == "__main__":
 	main()
