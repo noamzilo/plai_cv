@@ -34,15 +34,12 @@ from calibration.pitch_corners_const import \
 	net_left_bottom,
 	net_right_bottom,
 	net_center_bottom,
-	close_white_line_center_left_far,
-	close_white_line_center_right_far,
-	close_white_line_center_right_close,
-	close_white_line_center_left_close,
 )
 
 # ─── Display constants ────────────────────────────────────────────────
-image_scale_factor			= 0.25					# show camera view at 25 %
-pitch_canvas_base_size		= (600, 300)			# (width, height) before orientation swap
+image_scale_factor			= 0.25			# show camera view at 25 %
+pitch_inner_size_px			= (600, 300)	# (width, height) of pitch area
+buffer_px					= 100			# buffer on all four sides
 
 # ─── Player colours ───────────────────────────────────────────────────
 player_colors_bgr = [
@@ -53,33 +50,35 @@ player_colors_bgr = [
 ]
 player_color_array = np.array(player_colors_bgr, dtype=np.uint8)
 
-# ─── 2-D top-view pitch representation ────────────────────────────────
+# ─── 2-D top-view pitch representation ───────────────────────────────
 class Pitch2d:
 	def __init__(
 			self,
-			length_m: float = 20.0,
-			width_m: float = 10.0,
-			canvas_size_px: tuple[int, int] = pitch_canvas_base_size,
-			pitch_2d_corners_4x2: np.ndarray | None = None,
-			img_2d_corners_4x2: np.ndarray | None = None,
-			orientation: str = "horizontal",					# "horizontal" or "vertical"
+			length_m: float							= 20.0,
+			width_m: float							= 10.0,
+			canvas_inner_px: tuple[int, int]		= pitch_inner_size_px,
+			pitch_2d_corners_4x2: np.ndarray | None	= None,
+			img_2d_corners_4x2: np.ndarray | None	= None,
+			orientation: str							= "vertical",	# default vertical
 	):
 		self.len_m, self.wid_m	= length_m, width_m
 		self.orientation		= orientation.lower()
 		if self.orientation not in ("horizontal", "vertical"):
 			raise ValueError("orientation must be 'horizontal' or 'vertical'.")
 
-		# swap width/height for vertical mode
-		self.base_w_px, self.base_h_px = (
-			canvas_size_px if self.orientation == "horizontal" else canvas_size_px[::-1]
+		inner_w_px, inner_h_px	= (
+			canvas_inner_px if self.orientation == "horizontal" else canvas_inner_px[::-1]
 		)
+		self.inner_w_px, self.inner_h_px	= inner_w_px, inner_h_px
+		self.canvas_w_px						= inner_w_px + buffer_px * 2
+		self.canvas_h_px						= inner_h_px + buffer_px * 2
 
 		if pitch_2d_corners_4x2 is not None and img_2d_corners_4x2 is not None:
 			self.homography_3x3, _ = cv2.findHomography(
 				pitch_2d_corners_4x2,
 				img_2d_corners_4x2,
-				method=cv2.RANSAC,
-				ransacReprojThreshold=3.0,
+				method = cv2.RANSAC,
+				ransacReprojThreshold = 3.0,
 			)
 			self.inv_homography_3x3 = np.linalg.inv(self.homography_3x3)
 		else:
@@ -87,19 +86,25 @@ class Pitch2d:
 			self.inv_homography_3x3	= None
 
 	def blank_canvas(self) -> np.ndarray:
-		img = np.zeros((self.base_h_px, self.base_w_px, 3), np.uint8)
-		cv2.rectangle(img, (0, 0), (self.base_w_px - 1, self.base_h_px - 1), (255, 255, 255), 2)
+		img = np.zeros((self.canvas_h_px, self.canvas_w_px, 3), np.uint8)
+		cv2.rectangle(
+			img,
+			(buffer_px, buffer_px),
+			(buffer_px + self.inner_w_px - 1, buffer_px + self.inner_h_px - 1),
+			(255, 255, 255),
+			2,
+		)
 		return img
 
 	def pitch_to_canvas(self, pitch_xy_m: tuple[float, float]) -> tuple[int, int]:
 		x_m, y_m = pitch_xy_m
 		if self.orientation == "horizontal":
-			cx = int((x_m / self.len_m) * self.base_w_px)
-			cy = int((1.0 - y_m / self.wid_m) * self.base_h_px)
-		else:												# vertical
-			cx = int((y_m / self.wid_m) * self.base_w_px)
-			cy = int((x_m / self.len_m) * self.base_h_px)
-		return cx, cy
+			cx_inner = int((x_m / self.len_m) * self.inner_w_px)
+			cy_inner = int((1.0 - y_m / self.wid_m) * self.inner_h_px)
+		else:	# vertical
+			cx_inner = int((y_m / self.wid_m) * self.inner_w_px)
+			cy_inner = int((x_m / self.len_m) * self.inner_h_px)
+		return cx_inner + buffer_px, cy_inner + buffer_px
 
 	def draw_points(
 			self,
@@ -107,9 +112,6 @@ class Pitch2d:
 			points: list[tuple[tuple[float, float], tuple[int, int, int], str]],
 			font_scale: float = 0.5,
 	) -> np.ndarray:
-		"""
-		points – list of ((x_m, y_m), color_bgr, label_text)
-		"""
 		out = canvas.copy()
 		for (px, py), col, lbl in points:
 			if np.isnan(px):
@@ -138,73 +140,47 @@ class Pitch2d:
 	def image_to_pitch_batch(self, img_xy_batch: np.ndarray) -> np.ndarray:
 		return self._apply_homography(img_xy_batch, self.inv_homography_3x3)
 
-	def pitch_to_image_batch(self, pitch_xy_batch: np.ndarray) -> np.ndarray:
-		return self._apply_homography(pitch_xy_batch, self.homography_3x3)
-
 	def _apply_homography(self, xy_batch: np.ndarray, homography: np.ndarray) -> np.ndarray:
 		if homography is None:
 			raise ValueError("Homography has not been initialized.")
 		if len(xy_batch.shape) == 1:
 			xy_batch = xy_batch[np.newaxis, :]
-		n = xy_batch.shape[0]
-		homo = np.hstack([xy_batch, np.ones((n, 1), dtype=np.float32)])
+		homo = np.hstack([xy_batch, np.ones((xy_batch.shape[0], 1), dtype=np.float32)])
 		transformed = (homography @ homo.T).T
 		return transformed[:, :2] / transformed[:, 2:3]
 
-# ─── Shared static-elements builder ───────────────────────────────────
+# ─── Static pitch background ─────────────────────────────────────────
 def create_static_pitch_image(pitch2d: Pitch2d) -> np.ndarray:
-	"""
-	Returns a pitch canvas with:
-	• all requested static points & labels
-	• white poly-line through those points
-	• white net line at mid-court
-	"""
-	# static image-coordinates (pixels) → pitch-space coords
+	# static image points → pitch points
 	named_img_points = OrderedDict([
-		("deadzone0", np.array([0, 1155])),
+		("deadzone0", np.array([0, 1055])),
 		("deadzone1", np.array([0, 2159])),
 		("deadzone2", np.array([3839, 2159])),
 		("deadzone3", np.array([3839, 1174])),
 		("far_right_corner", far_right_corner),
-		("net_left_bottom", net_left_bottom),
-		("net_right_bottom", net_right_bottom),
-		("net_center_bottom", net_center_bottom),
 		("far_left_corner", far_left_corner),
-		("close_white_line_center_left_far", close_white_line_center_left_far),
-		("close_white_line_center_left_close", close_white_line_center_left_close),
-		("close_white_line_center_right_far", close_white_line_center_right_far),
-		("close_white_line_center_right_close", close_white_line_center_right_close),
+		("net_right_bottom", net_right_bottom),
+		("net_left_bottom", net_left_bottom),
 	])
-	colors_bgr = [
-		(255, 128, 128), (200, 200, 200), (100, 200, 100), (200, 100, 100),
-		(255,   0, 255), (255,   0,   0), (  0, 255,   0),
-		(  0,   0, 255), (255, 255,   0), (  0, 255, 255),
-		(128, 128, 255), (128, 255, 128), (255, 128, 255),
-	]
+	# convert & build poly-line order
+	img_pts		= np.array(list(named_img_points.values()), dtype=np.float32)
+	pitch_pts	= pitch2d.image_to_pitch_batch(img_pts)
 
-	img_pts			= np.array(list(named_img_points.values()), dtype=np.float32)
-	pitch_pts		= pitch2d.image_to_pitch_batch(img_pts)
-
-	point_specs = [
-		((float(px), float(py)), col, name)
-		for (name, col), (px, py) in zip(zip(named_img_points.keys(), colors_bgr), pitch_pts)
-	]
-
+	# build canvas
 	canvas = pitch2d.blank_canvas()
-	canvas = pitch2d.draw_points(canvas, point_specs)
 
-	# white polyline through requested order
-	poly_order = [
+	# polyline around court (white)
+	poly_order_names = [
 		"far_left_corner", "far_right_corner", "net_right_bottom",
 		"deadzone3", "deadzone2", "deadzone1", "deadzone0",
-		"far_left_corner", "net_left_bottom",
+		"net_left_bottom", "far_left_corner",
 	]
-	poly_pts = [pitch_pts[list(named_img_points.keys()).index(n)] for n in poly_order]
+	poly_pts = [pitch_pts[list(named_img_points.keys()).index(n)] for n in poly_order_names]
 	canvas = pitch2d.draw_polyline(canvas, poly_pts, (255, 255, 255), 2)
 
-	# net line (middle of court)
+	# net line – centre of court
 	net_pts = [(pitch2d.len_m / 2.0, 0.0), (pitch2d.len_m / 2.0, pitch2d.wid_m)]
-	canvas = pitch2d.draw_polyline(canvas, net_pts, (255, 255, 255), 2)
+	canvas  = pitch2d.draw_polyline(canvas, net_pts, (255, 255, 255), 2)
 
 	return canvas
 
@@ -217,10 +193,8 @@ class PitchTrackerVisualizer:
 			pitch_2d_corners_4x2: np.ndarray,
 			img_2d_corners_4x2: np.ndarray,
 	):
-		self.video_path		= video_path
 		self.detections_df	= detections_dataframe
-
-		self.pitch	= Pitch2d(
+		self.pitch			= Pitch2d(
 			pitch_2d_corners_4x2 = pitch_2d_corners_4x2,
 			img_2d_corners_4x2	 = img_2d_corners_4x2,
 			orientation			 = "vertical",
@@ -234,37 +208,48 @@ class PitchTrackerVisualizer:
 			if ind_df.empty:
 				continue
 
-			# detections → pitch XY-metres
-			det_x = ((ind_df.x1 + ind_df.x2) / 2).to_numpy(np.float32)
-			det_y = ind_df.y2.to_numpy(np.float32)
-			img_xy = np.stack([det_x, det_y], axis=1)
+			# detection → pitch XY (metres)
+			dx = ((ind_df.x1 + ind_df.x2) / 2).to_numpy(np.float32)
+			dy = ind_df.y2.to_numpy(np.float32)
+			img_xy = np.stack([dx, dy], axis=1)
 			pitch_xy = self.pitch.image_to_pitch_batch(img_xy)
 
-			player_ids = ind_df.player_id.to_numpy(np.int32)
-			valid_mask = ind_df.is_valid.to_numpy(bool)
+			player_ids	= ind_df.player_id.to_numpy(np.int32)
+			valid_mask	= ind_df.is_valid.to_numpy(bool)
 
 			# dynamic player point-specs
 			player_points = []
 			for pid, (px, py), valid in zip(player_ids, pitch_xy, valid_mask):
 				if not valid:
 					continue
-				col		= player_color_array[pid % len(player_color_array)].tolist()
-				lbl		= f"P{pid} ({px:.1f},{py:.1f})"
-				player_points.append(((float(px), float(py)), col, lbl))
+				col = player_color_array[pid % len(player_color_array)].tolist()
+				player_points.append(((float(px), float(py)), col, f"P{pid}"))
 
-			# build pitch image this frame
+			# build pitch for this frame
 			pitch_img = self.static_canvas.copy()
 			pitch_img = self.pitch.draw_points(pitch_img, player_points, font_scale = 0.5)
 
-			# scale camera frame for side-by-side
+			# draw detection boxes on camera frame
 			scaled_h = int(full_frame.shape[0] * image_scale_factor)
 			scaled_w = int(full_frame.shape[1] * image_scale_factor)
 			camera_small = cv2.resize(full_frame, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
 
-			# resize pitch to match camera height
-			target_h	= scaled_h
-			target_w	= int(pitch_img.shape[1] * (target_h / pitch_img.shape[0]))
-			pitch_small	= cv2.resize(pitch_img, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+			for pid, (x1, y1, x2, y2), valid in zip(
+					player_ids,
+					ind_df[["x1", "y1", "x2", "y2"]].values,
+					valid_mask,
+			):
+				if not valid:
+					continue
+				col	= player_color_array[pid % len(player_color_array)].tolist()
+				sx1, sy1, sx2, sy2 = [int(c * image_scale_factor) for c in (x1, y1, x2, y2)]
+				cv2.rectangle(camera_small, (sx1, sy1), (sx2, sy2), col, 2)
+				cv2.putText(camera_small, f"P{pid}", (sx1, sy1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
+
+			# resize pitch to camera height
+			target_h = scaled_h
+			target_w = int(pitch_img.shape[1] * (target_h / pitch_img.shape[0]))
+			pitch_small = cv2.resize(pitch_img, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
 			combined = np.hstack([camera_small, pitch_small])
 
@@ -273,10 +258,9 @@ class PitchTrackerVisualizer:
 				break
 		cv2.destroyAllWindows()
 
-# ─── Simple debug-view (static) ───────────────────────────────────────
+# ─── Optional static debug view ───────────────────────────────────────
 def visualize_basic_pitch(pitch2d: Pitch2d) -> None:
-	img = create_static_pitch_image(pitch2d)
-	cv2.imshow("Homography Debug View", img)
+	cv2.imshow("Homography Debug View", create_static_pitch_image(pitch2d))
 	cv2.waitKey(0)
 	cv2.destroyAllWindows()
 
@@ -295,8 +279,8 @@ def main() -> None:
 		net_left_bottom,
 	])
 
-	visualize_pitch_basic	= False
-	visualize_2d_tracking	= True
+	visualize_pitch_basic	= True
+	visualize_2d_tracking	= False
 
 	if visualize_pitch_basic:
 		pitch2d = Pitch2d(
@@ -308,14 +292,13 @@ def main() -> None:
 
 	if visualize_2d_tracking:
 		video_path = raw_data_path / "game1_3.mp4"
-		tracked_df = pd.read_csv(tracked_detections_csv_path)		# frame_ind,x1,y1,x2,y2,player_id,is_valid
-		visualizer = PitchTrackerVisualizer(
+		tracked_df = pd.read_csv(tracked_detections_csv_path)	# frame_ind,x1,y1,x2,y2,player_id,is_valid
+		PitchTrackerVisualizer(
 			video_path,
 			tracked_df,
 			pitch_2d_corners_4x2 = pitch_2d_corners_4x2,
 			img_2d_corners_4x2	 = img_2d_corners_4x2,
-		)
-		visualizer.show_video_with_pitch_overlay()
+		).show_video_with_pitch_overlay()
 
 if __name__ == "__main__":
 	main()
