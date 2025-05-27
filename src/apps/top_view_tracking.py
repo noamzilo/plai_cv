@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 #	⭾	TABS ONLY – copy / paste exactly
 
+from collections import OrderedDict
 import \
 	numpy as np
 import \
@@ -9,7 +10,6 @@ import \
 	cv2
 from pathlib import \
 	Path
-
 # ─── Project-specific paths ───────────────────────────────────────────
 from utils.paths import \
 	(
@@ -32,6 +32,12 @@ from calibration.pitch_corners_const import \
 	far_right_corner,
 	net_left_bottom,
 	net_right_bottom,
+	net_center_bottom,
+	close_white_line_center_left_far,
+	close_white_line_center_right_far,
+	close_white_line_center_right_close,
+	close_white_line_center_left_close,
+
 )
 
 # ─── Display constants ────────────────────────────────────────────────
@@ -78,79 +84,49 @@ player_color_array = np.array(
 class PitchHomography:
 	def __init__(
 			self,
-			pitch_2d_corners_4x2,
-			img_2d_corners_4x2,
+			pitch_2d_corners_4x2: np.ndarray,
+			img_2d_corners_4x2: np.ndarray,
 	):
-		self.affine_2x3, _ = cv2.estimateAffine2D(
+		self.homography_3x3, _ = cv2.findHomography(
 			pitch_2d_corners_4x2,
 			img_2d_corners_4x2,
 			method=cv2.RANSAC,
 			ransacReprojThreshold=3.0,
 		)
-
-		inv_affine_3x3 = np.eye(
-			N=3,
-			dtype=np.float32,
-		)
-		inv_affine_3x3[
-		:2,
-		:3] = self.affine_2x3
-		self.inv_affine_3x3 = np.linalg.inv(
-			inv_affine_3x3,
-		)
+		self.inv_homography_3x3 = np.linalg.inv(self.homography_3x3)
 
 	def image_to_pitch_batch(
 			self,
 			img_xy_batch: np.ndarray,
 	) -> np.ndarray:
-		n = \
-			img_xy_batch.shape[
-				0]
-		homo = np.hstack(
-			[
-				img_xy_batch,
-				np.ones(
-					(
-						n,
-						1,
-					),
-					np.float32,
-				),
-			],
+		return self._apply_homography(
+			img_xy_batch,
+			self.inv_homography_3x3,
 		)
-		pitch = (
-				self.inv_affine_3x3 @ homo.T).T
-		return pitch[
-		:,
-		:2] / pitch[
-		:,
-		2:3]  # (n, 2) in metres
 
 	def pitch_to_image_batch(
 			self,
 			pitch_xy_batch: np.ndarray,
 	) -> np.ndarray:
-		n = \
-			pitch_xy_batch.shape[
-				0]
-		homo = np.hstack(
-			[
-				pitch_xy_batch,
-				np.ones(
-					(
-						n,
-						1,
-					),
-					np.float32,
-				),
-			],
+		return self._apply_homography(
+			pitch_xy_batch,
+			self.homography_3x3,
 		)
-		img = (
-				self.affine_2x3 @ homo.T).T
-		return img.astype(
-			np.float32,
-		)  # (n, 2) pixels
 
+	def _apply_homography(
+			self,
+			xy_batch: np.ndarray,
+			homography: np.ndarray,
+	) -> np.ndarray:
+		if len(xy_batch.shape) == 1:
+			xy_batch = xy_batch[np.newaxis, :]
+		n = xy_batch.shape[0]
+		homo = np.hstack([
+			xy_batch,
+			np.ones((n, 1), dtype=np.float32),
+		])
+		transformed = (homography @ homo.T).T
+		return transformed[:, :2] / transformed[:, 2:3]
 
 # ─── 2-D top-view pitch canvas ────────────────────────────────────────
 class Pitch2d:
@@ -239,20 +215,16 @@ class PitchTrackerVisualizer:
 
 # ─── Entry point ──────────────────────────────────────────────────────
 def main() -> None:
-	tacked_detections_df = pd.read_csv(
-		tracked_detections_csv_path,
-	)  # frame_ind,x1,y1,x2,y2,player_id,is_valid
+	# tacked_detections_df = pd.read_csv(
+	# 	tracked_detections_csv_path,
+	# )  # frame_ind,x1,y1,x2,y2,player_id,is_valid
 	pitch_homography = PitchHomography(
 		pitch_2d_corners_4x2=np.stack(
 			[
-				far_left_corner_3d[
-				:2],
-				far_right_corner_3d[
-				:2],
-				net_right_bottom_3d[
-				:2],
-				net_left_bottom_3d[
-				:2],
+				far_left_corner_3d[:2],
+				far_right_corner_3d[:2],
+				net_right_bottom_3d[:2],
+				net_left_bottom_3d[:2],
 			],
 		),
 		img_2d_corners_4x2=np.stack(
@@ -264,14 +236,78 @@ def main() -> None:
 			],
 		),
 	)
-	video_path = raw_data_path / "game1_3.mp4"
-	visualizer = PitchTrackerVisualizer(
-		video_path,
-		tacked_detections_df,
-		pitch_homography,
-	)
-	visualizer.show_video_with_pitch_overlay()
+	# video_path = raw_data_path / "game1_3.mp4"
+	# visualizer = PitchTrackerVisualizer(
+	# 	video_path,
+	# 	tacked_detections_df,
+	# 	pitch_homography,
+	# )
+	# visualizer.show_video_with_pitch_overlay()
 
+	# ─── Visualization ────────────────────────────────────────────────────────────────
+	output_height = 800
+	output_width = 400
+	buffer = 100
+	buffered_output_image = np.zeros((output_height + buffer * 2, output_width + buffer * 2, 3), dtype=np.uint8)
+
+	# Draw white net line (middle of image)
+	buffered_output_shape = buffered_output_image.shape
+	buffered_output_height, actual_output_width = buffered_output_shape[:2]
+	cv2.line(buffered_output_image, (0, buffered_output_height // 2), (actual_output_width - 1, buffered_output_height // 2), (255, 255, 255), 2)
+
+	# ─── Points to Project ────────────────────────────────────────────────────────────
+	named_points = OrderedDict(
+		[
+			("net_left_bottom", net_left_bottom),
+			("net_right_bottom", net_right_bottom),
+			("net_center_bottom", net_center_bottom),
+			("far_left_corner", far_left_corner),
+			("far_right_corner", far_right_corner),
+			("close_white_line_center_left_far", close_white_line_center_left_far),
+			("close_white_line_center_left_close", close_white_line_center_left_close),
+			("close_white_line_center_right_far", close_white_line_center_right_far),
+			("close_white_line_center_right_close", close_white_line_center_right_close),
+			("manual_0_1155", np.array([0, 1155])),
+			("manual_0_2159", np.array([0, 2159])),
+			("manual_3839_2159", np.array([3839, 2159])),
+			("manual_3839_1174", np.array([3839, 1174])),
+		]
+	)
+
+	colors_bgr = [
+		(255,   0,   0),	# Red
+		(0,   255,   0),	# Green
+		(0,     0, 255),	# Blue
+		(255, 255,   0),	# Cyan
+		(255,   0, 255),	# Magenta
+		(0,   255, 255),	# Yellow
+		(128, 128, 255),	# Light pink
+		(128, 255, 128),	# Light green
+		(255, 128, 128),	# Light blue
+		(200, 200, 200),	# Gray
+		(100, 200, 100),
+		(200, 100, 100),
+	]
+
+	# ─── Project and Draw ─────────────────────────────────────────────────────────────
+	pitch_coords = pitch_homography.image_to_pitch_batch(np.array(list(named_points.values())))
+	for name, pitch_coord, color in zip(named_points.keys(), pitch_coords, colors_bgr):
+		# Map pitch XY to image
+		x_pitch, y_pitch = pitch_coord[0:2].flatten()
+		y_img = int(x_pitch / 20.0 * output_height)
+		x_img = int(y_pitch / 10.0 * output_width)
+		buffered_x = x_img + buffer
+		buffered_y = y_img + buffer
+
+		if 0 <= x_img < output_width and 0 <= y_img < output_height:
+			cv2.circle(buffered_output_image, (buffered_x, buffered_y), 4, color, -1)
+			cv2.putText(buffered_output_image, name, (buffered_x + 5, buffered_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+				color, 1)
+
+	# ─── Show and Save ────────────────────────────────────────────────────────────────
+	cv2.imshow("Homography Debug View", buffered_output_image)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
 
 if __name__ == "__main__":
 	main()
