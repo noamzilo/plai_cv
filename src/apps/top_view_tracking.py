@@ -216,49 +216,20 @@ class PitchTrackerVisualizer:
 		cv2.destroyAllWindows()
 
 
-# ─── Entry point ──────────────────────────────────────────────────────
-def main() -> None:
-	# tacked_detections_df = pd.read_csv(
-	# 	tracked_detections_csv_path,
-	# )  # frame_ind,x1,y1,x2,y2,player_id,is_valid
-	pitch2d = Pitch2d(
-		pitch_2d_corners_4x2=np.stack(
-			[
-				far_left_corner_3d[:2],
-				far_right_corner_3d[:2],
-				net_right_bottom_3d[:2],
-				net_left_bottom_3d[:2],
-			],
-		),
-		img_2d_corners_4x2=np.stack(
-			[
-				far_left_corner,
-				far_right_corner,
-				net_right_bottom,
-				net_left_bottom,
-			],
-		),
-	)
 
-	# video_path = raw_data_path / "game1_3.mp4"
-	# visualizer = PitchTrackerVisualizer(
-	# 	video_path,
-	# 	tacked_detections_df,
-	# 	pitch_homography,
-	# )
-	# visualizer.show_video_with_pitch_overlay()
-
+def visualize_basic_pitch(pitch2d):
 	# ─── Visualization ────────────────────────────────────────────────────────────────
 	output_height = 800
 	output_width = 400
 	buffer = 100
 	buffered_output_image = np.zeros((output_height + buffer * 2, output_width + buffer * 2, 3), dtype=np.uint8)
-
 	# Draw white net line (middle of image)
 	buffered_output_shape = buffered_output_image.shape
 	buffered_output_height, actual_output_width = buffered_output_shape[:2]
-	cv2.line(buffered_output_image, (0, buffered_output_height // 2), (actual_output_width - 1, buffered_output_height // 2), (255, 255, 255), 2)
-
+	cv2.line(
+		buffered_output_image, (0, buffered_output_height // 2), (actual_output_width - 1, buffered_output_height // 2),
+		(255, 255, 255), 2
+	)
 	# ─── Points to Project ────────────────────────────────────────────────────────────
 	named_points = OrderedDict(
 		[
@@ -277,22 +248,20 @@ def main() -> None:
 			("close_white_line_center_right_close", close_white_line_center_right_close),
 		]
 	)
-
 	colors_bgr = [
-		(255, 128, 128),	# Light blue
-		(200, 200, 200),	# Gray
+		(255, 128, 128),  # Light blue
+		(200, 200, 200),  # Gray
 		(100, 200, 100),
 		(200, 100, 100),
-		(255,   0, 255),	# Magenta
-		(255,   0,   0),	# Red
-		(0,   255,   0),	# Green
-		(0,     0, 255),	# Blue
-		(255, 255,   0),	# Cyan
-		(0,   255, 255),	# Yellow
-		(128, 128, 255),	# Light pink
-		(128, 255, 128),	# Light green
+		(255, 0, 255),  # Magenta
+		(255, 0, 0),  # Red
+		(0, 255, 0),  # Green
+		(0, 0, 255),  # Blue
+		(255, 255, 0),  # Cyan
+		(0, 255, 255),  # Yellow
+		(128, 128, 255),  # Light pink
+		(128, 255, 128),  # Light green
 	]
-
 	# ─── Project and Draw ─────────────────────────────────────────────────────────────
 	pitch_coords = pitch2d.image_to_pitch_batch(np.array(list(named_points.values())))
 	for name, pitch_coord, color in zip(named_points.keys(), pitch_coords, colors_bgr):
@@ -305,13 +274,58 @@ def main() -> None:
 
 		if 0 <= x_img < output_width + buffer and 0 <= y_img < output_height + buffer:
 			cv2.circle(buffered_output_image, (buffered_x, buffered_y), 4, color, -1)
-			cv2.putText(buffered_output_image, name, (buffered_x + 5, buffered_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-				color, 1)
-
+			cv2.putText(
+				buffered_output_image, name, (buffered_x + 5, buffered_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+				color, 1
+			)
 	# ─── Show and Save ────────────────────────────────────────────────────────────────
 	cv2.imshow("Homography Debug View", buffered_output_image)
 	cv2.waitKey(0)
 	cv2.destroyAllWindows()
+
+# ─── Entry point ──────────────────────────────────────────────────────
+def main() -> None:
+	pitch_2d_corners_4x2 = np.stack(
+		[
+			far_left_corner_3d[:2],
+			far_right_corner_3d[:2],
+			net_right_bottom_3d[:2],
+			net_left_bottom_3d[:2],
+		],
+	)
+	img_2d_corners_4x2 = np.stack(
+		[
+			far_left_corner,
+			far_right_corner,
+			net_right_bottom,
+			net_left_bottom,
+		],
+	)
+
+	visualize_pitch_basic = False
+	visualize_2d_tracking = True
+
+	if visualize_pitch_basic:
+		pitch2d = Pitch2d(
+			pitch_2d_corners_4x2=pitch_2d_corners_4x2,
+			img_2d_corners_4x2=img_2d_corners_4x2,
+		)
+		visualize_basic_pitch(pitch2d)
+
+	if visualize_2d_tracking:
+		video_path = raw_data_path / "game1_3.mp4"
+		tacked_detections_df = pd.read_csv(
+			tracked_detections_csv_path,
+		)  # frame_ind,x1,y1,x2,y2,player_id,is_valid
+		visualizer = PitchTrackerVisualizer(
+			video_path,
+			tacked_detections_df,
+			pitch_2d_corners_4x2=pitch_2d_corners_4x2,
+			img_2d_corners_4x2=img_2d_corners_4x2,
+		)
+		visualizer.show_video_with_pitch_overlay()
+
+
 
 if __name__ == "__main__":
 	main()
