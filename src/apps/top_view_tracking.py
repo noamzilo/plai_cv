@@ -16,17 +16,17 @@ from calibration.pitch_corners_const import far_left_corner, far_right_corner, n
 
 
 # ─── Display constants ────────────────────────────────────────────────
-IMAGE_SCALE_FACTOR			= 0.25		# show camera view at 25 %
-PITCH_CANVAS_BASE_SIZE		= (600, 300)	# (width, height) before scaling to match image
+image_scale_factor			= 0.25		# show camera view at 25 %
+pitch_canvas_base_size		= (600, 300)	# (width, height) before scaling to match image
 
 # ─── Player colours ───────────────────────────────────────────────────
-PLAYER_COLOURS_BGR = [
+player_colors_bgr = [
 	(255,   0,   0),	# Player 0 – Red
 	(  0, 255,   0),	# Player 1 – Green
 	(  0,   0, 255),	# Player 2 – Blue
 	(255, 255,   0)		# Player 3 – Cyan
 ]
-PLAYER_COLOUR_ARRAY = np.array(PLAYER_COLOURS_BGR, dtype=np.uint8)
+player_color_array = np.array(player_colors_bgr, dtype=np.uint8)
 
 # ─── Affine-only homography (pitch↔image) ─────────────────────────────
 class PitchHomography:
@@ -63,7 +63,7 @@ class PitchHomography:
 
 # ─── 2-D top-view pitch canvas ────────────────────────────────────────
 class Pitch2d:
-	def __init__(self, length_m=20.0, width_m=10.0, canvas_size_px=PITCH_CANVAS_BASE_SIZE):
+	def __init__(self, length_m=20.0, width_m=10.0, canvas_size_px=pitch_canvas_base_size):
 		self.len_m, self.wid_m			= length_m, width_m
 		self.base_w_px, self.base_h_px	= canvas_size_px
 
@@ -78,72 +78,72 @@ class Pitch2d:
 		cy = int((1.0 - y / self.wid_m) * self.base_h_px)
 		return cx, cy
 
-def draw_pitch_players(pitch_canvas: np.ndarray, pitch_converter: Pitch2d, players_dict: dict[int, tuple[float, float]]) -> np.ndarray:
-	out = pitch_canvas.copy()
-	for pid, (px, py) in players_dict.items():
-		if np.isnan(px):
-			continue
-		cx, cy = pitch_converter.pitch_to_canvas((px, py))
-		colour = PLAYER_COLOUR_ARRAY[pid % len(PLAYER_COLOUR_ARRAY)].tolist()
-		cv2.circle(out, (cx, cy), 6, colour, -1)
-		label = f"P{pid} ({px:.1f},{py:.1f})"
-		cv2.putText(out, label, (cx + 8, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
-	return out
+class PitchTrackerVisualizer:
+	def __init__(self, video_path: Path, detections_dataframe: pd.DataFrame, homography: PitchHomography):
+		self.video_path			= video_path
+		self.detections_df		= detections_dataframe
+		self.homography			= homography
+		self.pitch_converter	= Pitch2d()
+		self.base_canvas		= self.pitch_converter.blank_canvas()
+		self.video_reader		= VideoReader(video_path)
 
-# ─── Main overlay loop ────────────────────────────────────────────────
-def preview_tracking_overlay(video_path: Path, csv_df: pd.DataFrame, homography: PitchHomography) -> None:
-	video_reader			= VideoReader(video_path)
-	pitch_converter			= Pitch2d()
-	base_pitch_canvas		= pitch_converter.blank_canvas()
-
-	for frame_idx, full_frame in video_reader.video_frames_generator():
-		rows = csv_df[csv_df.frame_ind == frame_idx]
-		if rows.empty:
-			continue
-
-		# ── Compute centers & convert to pitch space ─────────────────
-		cx	= ((rows.x1 + rows.x2) / 2).to_numpy(np.float32)
-		cy	= ((rows.y1 + rows.y2) / 2).to_numpy(np.float32)
-		img_centers = np.stack([cx, cy], axis=1)						# (N, 2)
-		pitch_xy	= homography.image_to_pitch_batch(img_centers)		# (N, 2)
-
-		player_ids	= rows.player_id.to_numpy(np.int32)
-		valid_mask	= rows.is_valid.to_numpy(bool)
-
-		# ── Build dict for pitch rendering ───────────────────────────
-		player_pitch_dict = {int(pid): (float(px), float(py)) for pid, (px, py), v in zip(player_ids, pitch_xy, valid_mask) if v}
-
-		# ── Draw scaled camera view ─────────────────────────────────
-		scaled_h = int(full_frame.shape[0] * IMAGE_SCALE_FACTOR)
-		scaled_w = int(full_frame.shape[1] * IMAGE_SCALE_FACTOR)
-		scaled_frame = cv2.resize(full_frame, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
-
-		for pid, (x1, y1, x2, y2), (icx, icy), v in zip(player_ids, rows[["x1", "y1", "x2", "y2"]].values, img_centers, valid_mask):
-			if not v:
+	def draw_pitch_players(self, pitch_canvas: np.ndarray, players_dict: dict[int, tuple[float, float]]) -> np.ndarray:
+		out = pitch_canvas.copy()
+		for pid, (px, py) in players_dict.items():
+			if np.isnan(px):
 				continue
-			col = PLAYER_COLOUR_ARRAY[pid % len(PLAYER_COLOUR_ARRAY)].tolist()
-			# scale bbox coords
-			sx1, sy1, sx2, sy2 = [int(c * IMAGE_SCALE_FACTOR) for c in (x1, y1, x2, y2)]
-			cv2.rectangle(scaled_frame, (sx1, sy1), (sx2, sy2), col, 2)
-			cv2.putText(scaled_frame, f"P{pid}", (sx1, sy1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
+			cx, cy = self.pitch_converter.pitch_to_canvas((px, py))
+			colour = player_color_array[pid % len(player_color_array)].tolist()
+			cv2.circle(out, (cx, cy), 6, colour, -1)
+			label = f"P{pid} ({px:.1f},{py:.1f})"
+			cv2.putText(out, label, (cx + 8, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+		return out
 
-		# ── Prepare pitch canvas with players ───────────────────────
-		pitch_image = draw_pitch_players(base_pitch_canvas, pitch_converter, player_pitch_dict)
+	def preview(self) -> None:
+		for frame_idx, full_frame in self.video_reader.video_frames_generator():
+			rows = self.detections_df[self.detections_df.frame_ind == frame_idx]
+			if rows.empty:
+				continue
 
-		# resize pitch to same height as scaled camera view
-		pitch_h, pitch_w = pitch_image.shape[:2]
-		target_pitch_h = scaled_h
-		target_pitch_w = int(pitch_w * (target_pitch_h / pitch_h))
-		pitch_resized = cv2.resize(pitch_image, (target_pitch_w, target_pitch_h), interpolation=cv2.INTER_LINEAR)
+			cx = ((rows.x1 + rows.x2) / 2).to_numpy(np.float32)
+			cy = ((rows.y1 + rows.y2) / 2).to_numpy(np.float32)
+			img_centers = np.stack([cx, cy], axis=1)
+			pitch_xy = self.homography.image_to_pitch_batch(img_centers)
 
-		# ── Concatenate side-by-side (camera | pitch) ───────────────
-		combined = np.hstack([scaled_frame, pitch_resized])
+			player_ids = rows.player_id.to_numpy(np.int32)
+			valid_mask = rows.is_valid.to_numpy(bool)
 
-		cv2.imshow("Pitch Tracking (25 % camera + top view)", combined)
-		if cv2.waitKey(1) == ord("q"):
-			break
+			player_pitch_dict = {
+				int(pid): (float(px), float(py))
+				for pid, (px, py), v in zip(player_ids, pitch_xy, valid_mask) if v
+			}
 
-	cv2.destroyAllWindows()
+			scaled_h = int(full_frame.shape[0] * image_scale_factor)
+			scaled_w = int(full_frame.shape[1] * image_scale_factor)
+			scaled_frame = cv2.resize(full_frame, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+
+			for pid, (x1, y1, x2, y2), v in zip(player_ids, rows[["x1", "y1", "x2", "y2"]].values, valid_mask):
+				if not v:
+					continue
+				col = player_color_array[pid % len(player_color_array)].tolist()
+				sx1, sy1, sx2, sy2 = [int(c * image_scale_factor) for c in (x1, y1, x2, y2)]
+				cv2.rectangle(scaled_frame, (sx1, sy1), (sx2, sy2), col, 2)
+				cv2.putText(scaled_frame, f"P{pid}", (sx1, sy1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
+
+			pitch_image = self.draw_pitch_players(self.base_canvas, player_pitch_dict)
+
+			pitch_h, pitch_w = pitch_image.shape[:2]
+			target_pitch_h = scaled_h
+			target_pitch_w = int(pitch_w * (target_pitch_h / pitch_h))
+			pitch_resized = cv2.resize(pitch_image, (target_pitch_w, target_pitch_h), interpolation=cv2.INTER_LINEAR)
+
+			combined = np.hstack([scaled_frame, pitch_resized])
+
+			cv2.imshow("Pitch Tracking (25 % camera + top view)", combined)
+			if cv2.waitKey(1) == ord("q"):
+				break
+
+		cv2.destroyAllWindows()
 
 # ─── Entry point ──────────────────────────────────────────────────────
 def main() -> None:
@@ -163,7 +163,8 @@ def main() -> None:
 		])
 	)
 	video_path = raw_data_path / "game1_3.mp4"
-	preview_tracking_overlay(video_path, tacked_detections_df, pitch_homography)
+	visualizer = PitchTrackerVisualizer(video_path, tacked_detections_df, pitch_homography)
+	visualizer.preview()
 
 if __name__ == "__main__":
 	main()
