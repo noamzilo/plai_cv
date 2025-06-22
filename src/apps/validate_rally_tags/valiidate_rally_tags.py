@@ -7,7 +7,7 @@ import validate_rally_data_config as config
 VIDEO_EXTENSIONS = [".mp4", ".MP4", ".avi", ".mkv"]
 
 
-def load_csv_data():
+def load_annotations():
 	print(f"Loading: {config.RALLIES_CSV}, {config.HITS_CSV}, {config.HIT_ASSIGNMENTS_XLSX}")
 
 	rallies_df = pd.read_csv(config.RALLIES_CSV)
@@ -15,6 +15,37 @@ def load_csv_data():
 	hit_assignments_df = pd.read_excel(config.HIT_ASSIGNMENTS_XLSX)
 
 	return rallies_df, hits_df, hit_assignments_df
+
+def load_video_metadata(video_dir):
+	video_records = []
+
+	for filename in os.listdir(video_dir):
+		if not any(filename.endswith(ext) for ext in VIDEO_EXTENSIONS):
+			continue
+
+		video_path = os.path.join(video_dir, filename)
+
+		cap = cv2.VideoCapture(video_path)
+		fps = cap.get(cv2.CAP_PROP_FPS)
+		total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+		width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+		height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+		cap.release()
+
+		video_name = os.path.splitext(filename)[0]
+
+		video_records.append({
+			"video_name": video_name,
+			"video_path": video_path,
+			"fps": fps,
+			"total_frames": total_frames,
+			"width": width,
+			"height": height
+		})
+
+	video_df = pd.DataFrame(video_records)
+	print(f"Found {len(video_df)} videos in {video_dir}")
+	return video_df
 
 
 def draw_hit_marker(frame, x, y, color, label):
@@ -77,15 +108,17 @@ def find_video_file(rally_video_name):
 
 
 def main():
-	rallies_df, hits_df, hit_assignments_df = load_csv_data()
+	rallies_df, hits_df, hit_assignments_df = load_annotations()
+	videos_df = load_video_metadata(config.VIDEO_DIR)
 
 	for idx, rally_row in rallies_df.iterrows():
 		video_name = rally_row['video_name'] if 'video_name' in rally_row else rally_row['filename']
-		video_path = find_video_file(video_name)
-		if video_path is None:
+		video_row = videos_df[videos_df['video_name'] == video_name]
+		if video_row.empty:
 			print(f"[WARNING] Could not find video for {video_name}")
 			continue
 
+		video_path = video_row.iloc[0]['video_path']
 		output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}_validated.mp4")
 
 		process_video(
