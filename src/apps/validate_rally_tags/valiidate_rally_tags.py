@@ -33,9 +33,12 @@ def load_video_metadata(video_dir):
 		cap.release()
 
 		video_name = os.path.splitext(filename)[0]
+		video_extension = os.path.splitext(filename)[1]
 
 		video_records.append({
 			"video_name": video_name,
+			"video_extension": video_extension,
+			"video_name_with_ext": f"{video_name}{video_extension}",
 			"video_path": video_path,
 			"fps": fps,
 			"total_frames": total_frames,
@@ -113,7 +116,7 @@ def main():
 
 	for idx, rally_row in rallies_df.iterrows():
 		video_name = rally_row['video_name'] if 'video_name' in rally_row else rally_row['filename']
-		video_row = videos_df[videos_df['video_name'] == video_name]
+		video_row = videos_df[videos_df['video_name_with_ext'] == video_name]
 		if video_row.empty:
 			print(f"[WARNING] Could not find video for {video_name}")
 			continue
