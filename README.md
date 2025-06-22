@@ -1,0 +1,3 @@
+# Main paper and data
+paper: [Multi-Modal Hit Detection and Positional Analysis in Padel Competitions](https://openaccess.thecvf.com/content/CVPR2024W/CVsports/papers/Decorte_Multi-Modal_Hit_Detection_and_Positional_Analysis_in_Padel_Competitions_CVPRW_2024_paper.pdf#:~:text=padel,analysis%20of%20the%20implemented%20techniques)
+data: https://drive.google.com/file/d/12TfVDbo3dCZ0C5Ir7OBTUtanx4QDDmt2/view?usp=drive_link
