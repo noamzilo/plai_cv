@@ -6,8 +6,7 @@ from utils.paths import raw_data_path, detections_csv_path
 from acquisition.VideoReader import VideoReader
 from detection.detection_utils import detect_players, load_yolo_detector
 
-def find_detections_on_video():
-	video_path = raw_data_path / "game1_3.mp4"
+def find_detections_on_video(video_path):
 	print(f"started detecting on video {video_path}")
 	video_reader = VideoReader(video_path=video_path)
 	frames_generator = video_reader.video_frames_generator(start_frame=0, interval=1, end_frame=-1)
@@ -29,6 +28,10 @@ def save_detections(detections):
 	print(f"Saved to {detections_csv_path}")
 
 
-if __name__ == "__main__":
-	detections = find_detections_on_video
+def main():
+	video_path = raw_data_path / "001.mp4"
+	detections = find_detections_on_video(video_path=video_path)
 	save_detections(detections)
+
+if __name__ == "__main__":
+	main()
