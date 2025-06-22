@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "light-py-env"
+name = "plai-cv"
 version = "0.1.0"
 description = "Minimal Python env with OpenCV, NumPy, Matplotlib, and Pandas"
 authors = ["Noam"]
