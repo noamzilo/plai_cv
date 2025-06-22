@@ -14,7 +14,7 @@ def find_detections_on_video(video_path):
 
 	detections = []
 
-	for i_frame, frame in enumerate(frames_generator):
+	for i_frame, frame in frames_generator:
 		print(f"processing frame #{i_frame}")
 		players_bboxes = detect_players(frame, yolo_detector)
 		for (x1, y1), (x2, y2) in players_bboxes:
@@ -30,6 +30,7 @@ def save_detections(detections):
 
 def main():
 	video_path = raw_data_path / "001.mp4"
+	assert video_path.is_file(), video_path
 	detections = find_detections_on_video(video_path=video_path)
 	save_detections(detections)
 
