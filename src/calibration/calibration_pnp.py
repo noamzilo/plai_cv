@@ -6,6 +6,7 @@ import cv2
 from utils.paths import calculated_data_path
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
+from utils.paths import test_video_name
 
 # ─── 2-D image points ─────────────────────────────────────────────────
 from calibration.pitch_corners_const import (
@@ -100,6 +101,8 @@ class Camera:
 		return projected.reshape(-1, 2)
 
 # ─── Build Input Points ────────────────────────────────────────────────
+
+video_name = test_video_name
 image_points_2d = [
 	far_left_corner,
 	far_right_corner,
@@ -162,7 +165,7 @@ for i, pt in enumerate(projected):
 
 # ─── Visualize 2D Keypoints vs Reprojections ──────────────────────────
 assert calculated_data_path.is_dir()
-average_frame_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
+average_frame_path = calculated_data_path / video_name / "average_frame.bmp"
 assert average_frame_path.is_file()
 
 pitch_image = cv2.imread(str(average_frame_path))

@@ -11,8 +11,7 @@ import matplotlib.pyplot as pyplot_lib
 import cv2
 
 # ─── Paths (project specific) ──────────────────────────────────────────
-from utils.paths import detections_csv_path, tracked_detections_csv_path, raw_data_path
-
+from utils.paths import detections_csv_path, tracked_detections_csv_path, raw_data_path, test_video_name
 # ─── Constants ─────────────────────────────────────────────────────────
 MAX_CENTER_DISTANCE_THRESHOLD	= 250		# distance gate for matching
 IOU_SCORE_THRESHOLD				= 0.30		# minimum IOU score for a valid match
@@ -333,10 +332,11 @@ def main() -> None:
 	GENERATE_NEW_TRACKING_CSV	= True
 	is_plot_player_center_positions = False
 	VISUALIZE_TRACKING_OVERLAY	= True
+	video_name = test_video_name
 
 	if VISUALIZE_DETECTIONS_ONLY:
 		detections_dataframe = pandas_lib.read_csv(detections_csv_path)
-		preview_detections_only(raw_data_path / "game1_3.mp4", detections_dataframe)
+		preview_detections_only(raw_data_path / video_name, detections_dataframe)
 		return
 
 	if GENERATE_NEW_TRACKING_CSV:
@@ -351,7 +351,7 @@ def main() -> None:
 		plot_player_center_positions(tracking_dataframe)
 
 	if VISUALIZE_TRACKING_OVERLAY:
-		preview_tracking_overlay(raw_data_path / "game1_3.mp4", tracking_dataframe)
+		preview_tracking_overlay(raw_data_path / video_name, tracking_dataframe)
 
 if __name__ == "__main__":
 	main()

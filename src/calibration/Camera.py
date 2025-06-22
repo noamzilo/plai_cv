@@ -261,6 +261,7 @@ def plot_3d_scene(world_pts, cam_position, cam_rotation):
 
 
 def main():
+	video_name = "001.mp4"
 	world_points = np.array([
 		far_left_corner_3d, far_right_corner_3d,
 		net_left_bottom_3d, net_right_bottom_3d, net_center_bottom_3d,
@@ -280,7 +281,7 @@ def main():
 	camera_model = Camera(world_points, image_points)
 
 
-	image_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
+	image_path = calculated_data_path / video_name / "average_frame.bmp"
 	img_bgr = cv2.imread(str(image_path))
 	assert img_bgr is not None
 	img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)

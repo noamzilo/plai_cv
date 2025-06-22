@@ -25,6 +25,7 @@ from calibration.pitch_keypoints_3d import (
 	close_white_line_center_right_close_3d, close_white_line_center_right_far_3d
 )
 
+video_name = "001.mp4"
 # ─── Build correspondences ───────────────────────────────────────────
 image_points_2d = np.asarray([
 	far_left_corner, far_right_corner,
@@ -97,7 +98,7 @@ print("[INFO] Translation vec   :", tvec.flatten())
 print("[INFO] Mean reproj error :", reproj_err.mean(), "px")
 
 # ─── 2-D overlay (scaled) ────────────────────────────────────────────
-frame_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
+frame_path = calculated_data_path / video_name / "average_frame.bmp"
 img = cv2.imread(str(frame_path)); assert img is not None
 SCALE = 0.25
 vis = cv2.resize(img, (0,0), fx=SCALE, fy=SCALE)

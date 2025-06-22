@@ -271,6 +271,7 @@ def build_heatmaps(df: pd.DataFrame, pitch: Pitch2d, base: np.ndarray, output_di
 #                                MAIN
 # ════════════════════════════════════════════════════════════════════
 def main():
+	video_name = "001.mp4"
 	pitch_pts = np.stack([
 		far_left_corner_3d[:2],
 		far_right_corner_3d[:2],
@@ -294,11 +295,11 @@ def main():
 		df = pd.read_csv(pitch_csv)
 
 	if run_vis:
-		game_data = raw_data_path/"game1_3.mp4"
+		game_data = raw_data_path/ video_name
 		Visualiser(game_data,df,pitch,static_canvas).show()
 
 	if run_heat:
-		game_data_dir = calculated_data_path/"game1_3.mp4"
+		game_data_dir = calculated_data_path/video_name
 		build_heatmaps(df,pitch,static_canvas, output_dir=game_data_dir)
 
 if __name__=="__main__":

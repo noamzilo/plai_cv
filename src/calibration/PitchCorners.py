@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from utils.visualizations import cv2_imshow
+from utils.paths import test_video_name
 
 # ---------- main class ----------
 class PitchCorners:
@@ -15,7 +16,7 @@ class PitchCorners:
 		self.corners = self.calculate_corners()			# ← populate on construction
 
 	@staticmethod
-	def _hough_lines(edge_img, p=false):
+	def _hough_lines(edge_img, p=False):
 		if p:
 			lines = cv2.HoughLines(edge_img, 1, np.pi / 180, 150, None, 0, 0)
 			return [] if lines is None else lines[:, 0, :]
@@ -145,12 +146,14 @@ class PitchCorners:
 
 # ---------- quick CLI ----------
 if __name__ == "__main__":
+	video_name = test_video_name
+
 	import sys, json
 	from utils.paths import calculated_data_path				# tu módulo
 
-	img_path = calculated_data_path / "game1_3.mp4" / "average_frame.bmp"
-	out_dir	 = calculated_data_path / "game1_3.mp4" / "debug"
-	out_img	 = calculated_data_path / "game1_3.mp4" / "average_frame_with_corners.png"
+	img_path = calculated_data_path / video_name / "average_frame.bmp"
+	out_dir	 = calculated_data_path / video_name / "debug"
+	out_img	 = calculated_data_path / video_name / "average_frame_with_corners.png"
 
 	pc = PitchCorners(img_path)
 	print(json.dumps(pc.corners))								# imprime coordenadas

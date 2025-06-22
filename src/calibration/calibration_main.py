@@ -4,10 +4,10 @@ import os
 
 from calibration.VideoAverager import VideoAverager
 from calibration.PitchCorners import PitchCorners
-
+from utils.paths import test_video_name
 
 def main():
-	video_name = "game1_3.mp4"
+	video_name = test_video_name
 	raw_data_path.is_dir()
 	video_path = raw_data_path / video_name 
 	assert video_path.is_file()
