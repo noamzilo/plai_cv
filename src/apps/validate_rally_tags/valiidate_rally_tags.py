@@ -69,8 +69,8 @@ def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_pa
 	fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 	writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-	start_frame = rally_info['start_frame']
-	end_frame = rally_info['end_frame']
+	start_frame = rally_info['start']
+	end_frame = rally_info['end']
 
 	frame_idx = 0
 	while cap.isOpened():
