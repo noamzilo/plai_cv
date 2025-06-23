@@ -109,26 +109,38 @@ def find_video_file(rally_video_name):
 			return candidate
 	return None
 
+def extract_uncut_from_cut_filename(video_name, ext):
+	return "_".join(video_name.split("_")[:-1]) + ext
+
 
 def main():
 	rallies_df, hits_df, hit_assignments_df = load_annotations()
 	videos_df = load_video_metadata(config.VIDEO_DIR)
 
-	for idx, rally_row in rallies_df.iterrows():
-		video_name = rally_row['video_name'] if 'video_name' in rally_row else rally_row['filename']
-		video_row = videos_df[videos_df['video_name_with_ext'] == video_name]
-		if video_row.empty:
-			print(f"[WARNING] Could not find video for {video_name}")
+	for idx, video_row in videos_df.iterrows():
+		video_path = video_row['video_path']
+		video_name = video_row['video_name']
+		video_name_with_ext = video_row['video_name_with_ext']
+		ext = video_row['video_extension']
+		# Extract rally_id from filename (assuming it is embedded)
+		# Example: "rally_01234_part1.mp4"
+		rally_id = extract_uncut_from_cut_filename(video_name_with_ext, ext)
+
+		rally_row = rallies_df[rallies_df['filename'] == rally_id]
+		if rally_row.empty:
+			print(f"[WARNING] No rally row found for {video_name_with_ext}")
 			continue
 
-		video_path = video_row.iloc[0]['video_path']
-		output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}_validated.mp4")
+		hits_in_video = hits_df[hits_df['filename'] == video_name_with_ext]
+		assignments_in_video = hit_assignments_df[hit_assignments_df['video'] == video_name]
+
+		output_path = os.path.join(config.OUTPUT_DIR, f"{video_name_with_ext}_validated.mp4")
 
 		process_video(
 			video_path,
-			rally_row,
-			hits_df[hits_df['rally_id'] == rally_row['rally_id']] if 'rally_id' in hits_df else hits_df,
-			hit_assignments_df[hit_assignments_df['rally_id'] == rally_row['rally_id']] if 'rally_id' in hit_assignments_df else hit_assignments_df,
+			rally_row.iloc[0],
+			hits_in_video,
+			assignments_in_video,
 			output_path
 		)
 
