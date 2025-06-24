@@ -55,57 +55,147 @@ def draw_hit_marker(frame, x, y, color, label):
 	cv2.circle(frame, (x, y), 20, color, 3)
 	cv2.putText(frame, label, (x + 25, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
+import os
+import cv2
+import pandas as pd
 
-def process_video(video_path, video_info, hits_df, hit_assignments_df, output_path):
-	print(f"Processing {video_path}")
 
+import os
+import cv2
+import pandas as pd
+
+
+def process_video(video_path: str,
+				  hits_df: pd.DataFrame,
+				  hit_assignments_df: pd.DataFrame,
+				  output_path: str) -> None:
+	"""
+	Render `video_path` with visual markers for every hit and (if available)
+	the player assignment.
+	✓	uses *only* tabs for indentation
+	✓	no lambdas / inner-defs
+	✓	handles per-video filtering and “unknown” assignments gracefully
+	"""
+
+	# ────────────────── 1.  Video I/O setup ─────────────────────────────────
 	cap = cv2.VideoCapture(video_path)
+	if not cap.isOpened():
+		raise RuntimeError(f"Cannot open {video_path}")
+
 	fps = cap.get(cv2.CAP_PROP_FPS)
-	n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
-	fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-	writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+	writer = cv2.VideoWriter(
+		output_path,
+		cv2.VideoWriter_fourcc(*"mp4v"),
+		fps,
+		(width, height)
+	)
 
-	hits_df['start_frame'] = (hits_df['start'] * fps).round().astype(int)
-	hits_df['end_frame'] = (hits_df['end'] * fps).round().astype(int)
-	hit_assignments_df['timestamp_seconds'] = pd.to_timedelta(hit_assignments_df['timestamp']).dt.total_seconds()
-	hit_assignments_df['frame_num'] = (hit_assignments_df['timestamp_seconds'] * fps).round().astype(int)
-	assignments_frame_to_player = hit_assignments_df.set_index('frame_num')['player']
-	hits_df['assigned_player'] = "unknown"
-	# assign player to each hit by assignments_frame_to_player and reindex hits_df based on frame
-	for hits_df_ind, row in hits_df.iterrows():
-		player_assigned = "unknown"
-		for frame_num in range(row['start_frame'], row['end_frame'] + 1):
-			if frame_num in assignments_frame_to_player:
-				player_assigned = assignments_frame_to_player[frame_num]
+	# ────────────────── 2.  Filter rows for this video ──────────────────────
+	video_name = os.path.basename(video_path)
+
+	hits_df = hits_df[hits_df["filename"] == video_name].copy()
+	hit_assignments_df = hit_assignments_df[hit_assignments_df["video"] == video_name].copy()
+
+	# if there are no hits at all, just copy the video and return
+	if hits_df.empty:
+		while True:
+			ret, frame = cap.read()
+			if not ret:
 				break
+			writer.write(frame)
+		cap.release()
+		writer.release()
+		print(f"Saved {output_path} (no hits)")
+		return
 
-		for frame_num in range(row['start_frame'], row['end_frame'] + 1):
-			hits_df['assigned_player'] = player_assigned
+	# ────────────────── 3.  Pre-compute helper columns ──────────────────────
+	hits_df["start_frame"] = (hits_df["start"] * fps).round().astype(int)
+	hits_df["end_frame"] = (hits_df["end"] * fps).round().astype(int)
+	hits_df["assigned_player"] = "unknown"
 
-	frame_index = 0
-	timestamp = 0
+	hit_assignments_df["timestamp_sec"] = (
+		pd.to_timedelta(hit_assignments_df["timestamp"]).dt.total_seconds()
+	)
+	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
+	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
+
+	# ── assign a player (if any) to every hit row
+	for idx, row in hits_df.iterrows():
+		player_value = "unknown"
+		for f in range(row["start_frame"], row["end_frame"] + 1):
+			if f in frame_to_player:
+				player_value = frame_to_player[f]
+				break
+		hits_df.at[idx, "assigned_player"] = player_value
+
+	# ────────────────── 4.  Frame-by-frame rendering ────────────────────────
+	frame_idx = 0
+	timestamp_sec = 0.0
+
+	current_hit_idx = 0
+	current_hit = hits_df.iloc[current_hit_idx]
+
 	while cap.isOpened():
-		ret, frame_num = cap.read()
+		ret, frame = cap.read()
 		if not ret:
 			break
 
+		# advance pointer once we pass the current hit’s window
+		while frame_idx > current_hit["end_frame"]:
+			current_hit_idx += 1
+			if current_hit_idx >= len(hits_df):
+				current_hit = None
+				break
+			current_hit = hits_df.iloc[current_hit_idx]
 
+		# ─────────── on-screen diagnostics (frame & time) ────────────────
+		cv2.putText(
+			frame,
+			f"Frame {frame_idx}",
+			(40, 40),
+			cv2.FONT_HERSHEY_SIMPLEX,
+			1.0,
+			(255, 255, 255),
+			2
+		)
+		cv2.putText(
+			frame,
+			f"t {timestamp_sec:.3f}s",
+			(40, 80),
+			cv2.FONT_HERSHEY_SIMPLEX,
+			0.8,
+			(255, 255, 255),
+			2
+		)
 
-		cv2.putText(frame_num, f"Frame {frame_index}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-		draw_hit_marker(frame_num, 100, 100, (0, 0, 255), "HIT")
+		# ─────────── hit-specific overlays ────────────────────────────────
+		has_current_hit = current_hit is not None
+		if has_current_hit:
+			start_frame = current_hit["start_frame"]
+			end_frame = current_hit["end_frame"]
+			player_lbl = current_hit["assigned_player"]
+		else:
+			start_frame = end_frame = player_lbl = None
 
-		draw_hit_marker(frame_num, 200, 200, (0, 255, 0), f"Player {assign_row['player']}")
+		if has_current_hit and start_frame <= frame_idx <= end_frame:
+			draw_hit_marker(frame, 100, 100, (0, 0, 255), "HIT")
+			if player_lbl != "unknown":
+				draw_hit_marker(frame, 200, 200, (0, 255, 0), f"Player {player_lbl}")
 
-		writer.write(frame_num)
-		frame_index += 1
+		writer.write(frame)
+		frame_idx += 1
+		timestamp_sec += 1.0 / fps
 
+	# ────────────────── 5.  Cleanup ────────────────────────────────────────
 	cap.release()
 	writer.release()
 	print(f"Saved {output_path}")
+
+
 
 
 def find_video_file(rally_video_name):
