@@ -71,33 +71,37 @@ def process_video(video_path, video_info, hits_df, hit_assignments_df, output_pa
 
 	hits_df['start_frame'] = (hits_df['start'] * fps).round().astype(int)
 	hits_df['end_frame'] = (hits_df['end'] * fps).round().astype(int)
+	hit_assignments_df['timestamp_seconds'] = pd.to_timedelta(hit_assignments_df['timestamp']).dt.total_seconds()
+	hit_assignments_df['frame_num'] = (hit_assignments_df['timestamp_seconds'] * fps).round().astype(int)
+	assignments_frame_to_player = hit_assignments_df.set_index('frame_num')['player']
+	hits_df['assigned_player'] = "unknown"
+	# assign player to each hit by assignments_frame_to_player and reindex hits_df based on frame
+	for hits_df_ind, row in hits_df.iterrows():
+		player_assigned = "unknown"
+		for frame_num in range(row['start_frame'], row['end_frame'] + 1):
+			if frame_num in assignments_frame_to_player:
+				player_assigned = assignments_frame_to_player[frame_num]
+				break
 
-	hit_frames = set()
-	for _, row in hits_df.iterrows():
-		for frame in range(row['start_frame'], row['end_frame'] + 1):
-			hit_frames.add(frame)
+		for frame_num in range(row['start_frame'], row['end_frame'] + 1):
+			hits_df['assigned_player'] = player_assigned
 
-	hit_frames = sorted(hit_frames)
-
-	frame_idx = 0
+	frame_index = 0
+	timestamp = 0
 	while cap.isOpened():
-		ret, frame = cap.read()
+		ret, frame_num = cap.read()
 		if not ret:
 			break
 
-		cv2.putText(frame, f"Frame {frame_idx}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
 
+		cv2.putText(frame_num, f"Frame {frame_index}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+		draw_hit_marker(frame_num, 100, 100, (0, 0, 255), "HIT")
 
+		draw_hit_marker(frame_num, 200, 200, (0, 255, 0), f"Player {assign_row['player']}")
 
-		draw_hit_marker(frame, 100, 100, (0, 0, 255), "HIT")
-
-		assignments_in_frame = hit_assignments_df[hit_assignments_df['frame'] == frame_idx]
-		for _, assign_row in assignments_in_frame.iterrows():
-			draw_hit_marker(frame, 200, 200, (0, 255, 0), f"Player {assign_row['player']}")
-
-		writer.write(frame)
-		frame_idx += 1
+		writer.write(frame_num)
+		frame_index += 1
 
 	cap.release()
 	writer.release()
