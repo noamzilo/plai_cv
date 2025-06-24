@@ -124,15 +124,38 @@ def process_video(videos_df: pd.DataFrame,
 	hit_assignments_df["timestamp_sec"] = pd.to_timedelta(hit_assignments_df["timestamp_fixed"]).dt.total_seconds()
 
 	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
+	frame_tolerance = int(round(fps * 0.250))
+
 	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
 
-	# ── assign a player (if any) to every hit row
+	# assign player (with tolerance) to each hit row
 	for idx, row in hits_df.iterrows():
-		player_value = "unknown"
-		for f in range(row["start_frame"], row["end_frame"] + 1):
-			if f in frame_to_player:
-				player_value = frame_to_player[f]
-				break
+		hit_start = row["start_frame"]
+		hit_end = row["end_frame"]
+
+		window_start = hit_start - frame_tolerance
+		window_end = hit_end + frame_tolerance
+
+		# find all frames in tolerance window that have a player
+		frames_in_window = [
+			f for f in frame_to_player.index
+			if window_start <= f <= window_end
+		]
+
+		# collect unique player names in this window
+		players_found = set()
+		for f in frames_in_window:
+			players_found.add(frame_to_player[f])
+
+		if len(players_found) == 0:
+			player_value = "unknown"
+		elif len(players_found) == 1:
+			player_value = next(iter(players_found))
+		else:
+			raise RuntimeError(
+				f"Hit [{idx}] overlaps with multiple player annotations: {players_found}"
+			)
+
 		hits_df.at[idx, "assigned_player"] = player_value
 
 	# ────────────────── 4.  Frame-by-frame rendering ────────────────────────
@@ -148,12 +171,24 @@ def process_video(videos_df: pd.DataFrame,
 			break
 
 		# advance pointer once we pass the current hit’s window
-		while frame_idx > current_hit["end_frame"]:
-			current_hit_idx += 1
-			if current_hit_idx >= len(hits_df):
+		while True:
+			is_no_more_hits = current_hit is None
+			is_current_frame_in_hit = not is_no_more_hits and frame_idx <= current_hit["end_frame"]
+			is_last_hit = current_hit_idx + 1 >= len(hits_df)
+
+			if is_no_more_hits or is_current_frame_in_hit:
+				break
+
+			if is_last_hit:
 				current_hit = None
 				break
-			current_hit = hits_df.iloc[current_hit_idx]
+
+			# safe to advance
+			next_hit_idx = current_hit_idx + 1
+			next_hit = hits_df.iloc[next_hit_idx]
+
+			current_hit_idx = next_hit_idx
+			current_hit = next_hit
 
 		# ─────────── on-screen diagnostics (frame & time) ────────────────
 		cv2.putText(
