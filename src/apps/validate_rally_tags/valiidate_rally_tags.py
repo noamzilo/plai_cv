@@ -61,7 +61,7 @@ def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_pa
 
 	cap = cv2.VideoCapture(video_path)
 	fps = cap.get(cv2.CAP_PROP_FPS)
-	total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+	n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -69,19 +69,10 @@ def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_pa
 	fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 	writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-	start_frame = rally_info['start']
-	end_frame = rally_info['end']
-
 	frame_idx = 0
 	while cap.isOpened():
 		ret, frame = cap.read()
 		if not ret:
-			break
-
-		if frame_idx < start_frame:
-			frame_idx += 1
-			continue
-		if frame_idx > end_frame:
 			break
 
 		cv2.putText(frame, f"Frame {frame_idx}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
@@ -138,7 +129,7 @@ def main():
 
 		process_video(
 			video_path,
-			rally_row.iloc[0],
+			video_row,
 			hits_in_video,
 			assignments_in_video,
 			output_path
