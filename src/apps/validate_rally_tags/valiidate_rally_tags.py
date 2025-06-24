@@ -56,7 +56,7 @@ def draw_hit_marker(frame, x, y, color, label):
 	cv2.putText(frame, label, (x + 25, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
 
-def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_path):
+def process_video(video_path, video_info, hits_df, hit_assignments_df, output_path):
 	print(f"Processing {video_path}")
 
 	cap = cv2.VideoCapture(video_path)
@@ -69,6 +69,16 @@ def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_pa
 	fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 	writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
+	hits_df['start_frame'] = (hits_df['start'] * fps).round().astype(int)
+	hits_df['end_frame'] = (hits_df['end'] * fps).round().astype(int)
+
+	hit_frames = set()
+	for _, row in hits_df.iterrows():
+		for frame in range(row['start_frame'], row['end_frame'] + 1):
+			hit_frames.add(frame)
+
+	hit_frames = sorted(hit_frames)
+
 	frame_idx = 0
 	while cap.isOpened():
 		ret, frame = cap.read()
@@ -77,9 +87,10 @@ def process_video(video_path, rally_info, hits_df, hit_assignments_df, output_pa
 
 		cv2.putText(frame, f"Frame {frame_idx}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-		hits_in_frame = hits_df[hits_df['frame'] == frame_idx]
-		for _, hit_row in hits_in_frame.iterrows():
-			draw_hit_marker(frame, 100, 100, (0, 0, 255), "HIT")
+
+
+
+		draw_hit_marker(frame, 100, 100, (0, 0, 255), "HIT")
 
 		assignments_in_frame = hit_assignments_df[hit_assignments_df['frame'] == frame_idx]
 		for _, assign_row in assignments_in_frame.iterrows():
@@ -106,6 +117,9 @@ def extract_uncut_from_cut_filename(video_name, ext):
 
 def main():
 	rallies_df, hits_df, hit_assignments_df = load_annotations()
+	rallies_df = rallies_df.reset_index(drop=True)
+	hits_df = hits_df.reset_index(drop=True)
+	hit_assignments_df = hit_assignments_df.reset_index(drop=True)
 	videos_df = load_video_metadata(config.VIDEO_DIR)
 
 	for idx, video_row in videos_df.iterrows():
@@ -125,6 +139,8 @@ def main():
 		hits_in_video = hits_df[hits_df['filename'] == video_name_with_ext]
 		assignments_in_video = hit_assignments_df[hit_assignments_df['video'] == video_name]
 
+		if len(assignments_in_video) == 0:
+			continue
 		output_path = os.path.join(config.OUTPUT_DIR, f"{video_name_with_ext}_validated.mp4")
 
 		process_video(
