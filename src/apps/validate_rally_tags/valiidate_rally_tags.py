@@ -120,9 +120,9 @@ def process_video(videos_df: pd.DataFrame,
 	hits_df["end_frame"] = (hits_df["end"] * fps).round().astype(int)
 	hits_df["assigned_player"] = "unknown"
 
-	hit_assignments_df["timestamp_sec"] = (
-		pd.to_timedelta(hit_assignments_df["timestamp"]).dt.total_seconds()
-	)
+	hit_assignments_df["timestamp_fixed"] = "00:" + hit_assignments_df["timestamp"]
+	hit_assignments_df["timestamp_sec"] = pd.to_timedelta(hit_assignments_df["timestamp_fixed"]).dt.total_seconds()
+
 	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
 	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
 
