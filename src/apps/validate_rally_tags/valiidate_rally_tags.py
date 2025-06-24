@@ -65,7 +65,7 @@ import cv2
 import pandas as pd
 
 
-def process_video(video_path: str,
+def process_video(videos_df: pd.DataFrame,
 				  hits_df: pd.DataFrame,
 				  hit_assignments_df: pd.DataFrame,
 				  output_path: str) -> None:
@@ -78,6 +78,8 @@ def process_video(video_path: str,
 	"""
 
 	# ────────────────── 1.  Video I/O setup ─────────────────────────────────
+	video_metadata = videos_df.iloc[0]
+	video_path = video_metadata["video_path"]
 	cap = cv2.VideoCapture(video_path)
 	if not cap.isOpened():
 		raise RuntimeError(f"Cannot open {video_path}")
@@ -95,10 +97,11 @@ def process_video(video_path: str,
 	)
 
 	# ────────────────── 2.  Filter rows for this video ──────────────────────
-	video_name = os.path.basename(video_path)
+	video_name_with_ext = video_metadata["video_name_with_ext"]
+	video_name_no_ext = video_metadata["video_name"]
 
-	hits_df = hits_df[hits_df["filename"] == video_name].copy()
-	hit_assignments_df = hit_assignments_df[hit_assignments_df["video"] == video_name].copy()
+	hits_df = hits_df[hits_df["filename"] == video_name_with_ext].copy()
+	hit_assignments_df = hit_assignments_df[hit_assignments_df["video"] == video_name_no_ext].copy()
 
 	# if there are no hits at all, just copy the video and return
 	if hits_df.empty:
@@ -238,8 +241,7 @@ def main():
 		output_path = os.path.join(config.OUTPUT_DIR, f"{video_name_with_ext}_validated.mp4")
 
 		process_video(
-			video_path,
-			video_row,
+			videos_df.iloc[[idx]],
 			hits_in_video,
 			assignments_in_video,
 			output_path
