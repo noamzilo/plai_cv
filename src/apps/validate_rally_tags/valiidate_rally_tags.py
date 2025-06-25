@@ -124,41 +124,49 @@ def process_video(videos_df: pd.DataFrame,
 	hit_assignments_df["timestamp_sec"] = pd.to_timedelta(hit_assignments_df["timestamp_fixed"]).dt.total_seconds()
 
 	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
-	frame_tolerance = int(round(fps * 0.250))
+	frame_tolerance = int(round(fps * 0.25))
 
 	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
 
-	# assign player (with tolerance) to each hit row
+	# assign player to each hit — based on closest assignment within tolerance
+	hits_df["assigned_player"] = "unknown"
+
 	for idx, row in hits_df.iterrows():
-		hit_start = row["start_frame"]
-		hit_end = row["end_frame"]
+		hit_center_frame = (row["start_frame"] + row["end_frame"]) // 2
 
-		window_start = hit_start - frame_tolerance
-		window_end = hit_end + frame_tolerance
+		# compute distances to all hit assignments
+		distances = {
+			f: abs(hit_center_frame - f)
+			for f in frame_to_player.index
+			if abs(hit_center_frame - f) <= frame_tolerance
+		}
 
-		# find all frames in tolerance window that have a player
-		frames_in_window = [
-			f for f in frame_to_player.index
-			if window_start <= f <= window_end
-		]
-
-		# collect unique player names in this window
-		players_found = set()
-		for f in frames_in_window:
-			players_found.add(frame_to_player[f])
-
-		if len(players_found) == 0:
+		if len(distances) == 0:
 			player_value = "unknown"
-		elif len(players_found) == 1:
-			player_value = next(iter(players_found))
+		elif len(distances) == 1:
+			closest_f = min(distances, key=distances.get)
+			player_value = frame_to_player[closest_f]
 		else:
-			raise RuntimeError(
-				f"Hit [{idx}] overlaps with multiple player annotations: {players_found}"
-			)
+			# multiple hit assignments within tolerance window
+			closest_dist = min(distances.values())
+			frames_closest = [
+				f for f, dist in distances.items() if dist == closest_dist
+			]
+
+			players_found = {frame_to_player[f] for f in frames_closest}
+
+			if len(players_found) == 1:
+				player_value = players_found.pop()
+			else:
+				raise RuntimeError(
+					f"Hit [{idx}] center={hit_center_frame} overlaps multiple players: {players_found}"
+				)
 
 		hits_df.at[idx, "assigned_player"] = player_value
 
 	# ────────────────── 4.  Frame-by-frame rendering ────────────────────────
+	n_hits = len(hits_df)
+	marked_hits = 0
 	frame_idx = 0
 	timestamp_sec = 0.0
 
@@ -220,9 +228,10 @@ def process_video(videos_df: pd.DataFrame,
 			start_frame = end_frame = player_lbl = None
 
 		if has_current_hit and start_frame <= frame_idx <= end_frame:
-			draw_hit_marker(frame, 100, 100, (0, 0, 255), "HIT")
+			draw_hit_marker(frame, 1000, 500, (0, 0, 255), "HIT")
 			if player_lbl != "unknown":
-				draw_hit_marker(frame, 200, 200, (0, 255, 0), f"Player {player_lbl}")
+				draw_hit_marker(frame, 1200, 500, (0, 255, 0), f"Player {player_lbl}")
+			draw_hit_marker(frame, 1200, 400, (255, 255, 0), f"HitInd {current_hit_idx}")
 
 		writer.write(frame)
 		frame_idx += 1
@@ -231,7 +240,7 @@ def process_video(videos_df: pd.DataFrame,
 	# ────────────────── 5.  Cleanup ────────────────────────────────────────
 	cap.release()
 	writer.release()
-	print(f"Saved {output_path}")
+	print(f"Saved {output_path}, #marked hits: {marked_hits}/{n_hits}")
 
 
 
@@ -257,6 +266,8 @@ def main():
 	for idx, video_row in videos_df.iterrows():
 		video_path = video_row['video_path']
 		video_name = video_row['video_name']
+		if not "20230528_VIGO_12" in video_name:
+			continue
 		video_name_with_ext = video_row['video_name_with_ext']
 		ext = video_row['video_extension']
 		# Extract rally_id from filename (assuming it is embedded)
