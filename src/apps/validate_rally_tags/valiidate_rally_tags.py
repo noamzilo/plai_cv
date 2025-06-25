@@ -159,13 +159,12 @@ def process_video(videos_df: pd.DataFrame,
 	# ────────────────── 3.  Pre-compute helper columns ──────────────────────
 	hits_df["start_frame"] = (hits_df["start"] * fps).round().astype(int)
 	hits_df["end_frame"] = (hits_df["end"] * fps).round().astype(int)
-	hits_df["assigned_player"] = "unknown"
 
 	hit_assignments_df["timestamp_fixed"] = "00:" + hit_assignments_df["timestamp"]
 	hit_assignments_df["timestamp_sec"] = pd.to_timedelta(hit_assignments_df["timestamp_fixed"]).dt.total_seconds()
 
 	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
-	frame_tolerance = int(round(fps * 0.25))
+	frame_tolerance = int(round(fps * 0.3))
 
 	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
 
@@ -183,6 +182,7 @@ def process_video(videos_df: pd.DataFrame,
 		}
 
 		if len(distances) == 0:
+			raise ValueError("Unknown not allowed for this test")
 			player_value = "unknown"
 		elif len(distances) == 1:
 			closest_f = min(distances, key=distances.get)
@@ -269,10 +269,12 @@ def process_video(videos_df: pd.DataFrame,
 
 		if has_current_hit and start_frame <= frame_idx <= end_frame:
 			draw_hit_marker(frame, 1000, 500, (0, 0, 255), "HIT")
-			if player_lbl != "unknown":
-				draw_hit_marker(frame, 1200, 500, (0, 255, 0), f"Player {player_lbl}")
 			draw_hit_marker(frame, 1200, 400, (255, 255, 0), f"HitInd {current_hit_idx}")
 			draw_hit_marker(frame, 1200, 300, (0, 255, 255), f"{start_frame}: {end_frame}")
+			if player_lbl != "unknown":
+				draw_hit_marker(frame, 1200, 500, (0, 255, 0), f"Player {player_lbl}")
+			else:
+				pass
 
 		writer.write(frame)
 		frame_idx += 1
