@@ -307,7 +307,7 @@ def main():
 	for idx, video_row in videos_df.iterrows():
 		video_path = video_row['video_path']
 		video_name = video_row['video_name']
-		if not "20230528_VIGO_12" in video_name:
+		if "20230528_VIGO_11" not in video_name:
 			continue
 		video_name_with_ext = video_row['video_name_with_ext']
 		ext = video_row['video_extension']
