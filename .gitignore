@@ -175,6 +175,7 @@ cython_debug/
 
 
 # Plai
-/data
+/data/proprietary
+/data/decorte/rallies
 /output/
 /.idea/workspace.xml

@@ -131,7 +131,7 @@ def process_video(videos_df: pd.DataFrame,
 	# assign player to each hit — based on closest assignment within tolerance
 	hits_df["assigned_player"] = "unknown"
 
-	for idx, row in hits_df.iterrows():
+	for hit_index, (idx, row) in enumerate(hits_df.iterrows()):
 		hit_center_frame = (row["start_frame"] + row["end_frame"]) // 2
 
 		# compute distances to all hit assignments
@@ -166,7 +166,6 @@ def process_video(videos_df: pd.DataFrame,
 
 	# ────────────────── 4.  Frame-by-frame rendering ────────────────────────
 	n_hits = len(hits_df)
-	marked_hits = 0
 	frame_idx = 0
 	timestamp_sec = 0.0
 
@@ -232,6 +231,7 @@ def process_video(videos_df: pd.DataFrame,
 			if player_lbl != "unknown":
 				draw_hit_marker(frame, 1200, 500, (0, 255, 0), f"Player {player_lbl}")
 			draw_hit_marker(frame, 1200, 400, (255, 255, 0), f"HitInd {current_hit_idx}")
+			draw_hit_marker(frame, 1200, 300, (0, 255, 255), f"{start_frame}: {end_frame}")
 
 		writer.write(frame)
 		frame_idx += 1
@@ -240,7 +240,7 @@ def process_video(videos_df: pd.DataFrame,
 	# ────────────────── 5.  Cleanup ────────────────────────────────────────
 	cap.release()
 	writer.release()
-	print(f"Saved {output_path}, #marked hits: {marked_hits}/{n_hits}")
+	print(f"Saved {output_path}, #marked hits: {'x'}/{n_hits}")
 
 
 
