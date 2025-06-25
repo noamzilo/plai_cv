@@ -164,7 +164,7 @@ def process_video(videos_df: pd.DataFrame,
 	hit_assignments_df["timestamp_sec"] = pd.to_timedelta(hit_assignments_df["timestamp_fixed"]).dt.total_seconds()
 
 	hit_assignments_df["frame_num"] = (hit_assignments_df["timestamp_sec"] * fps).round().astype(int)
-	frame_tolerance = int(round(fps * 0.3))
+	frame_tolerance = int(round(fps * 0.5))
 
 	frame_to_player = hit_assignments_df.set_index("frame_num")["player"]
 
@@ -178,11 +178,11 @@ def process_video(videos_df: pd.DataFrame,
 		distances = {
 			f: abs(hit_center_frame - f)
 			for f in frame_to_player.index
-			if abs(hit_center_frame - f) <= frame_tolerance
+			# if abs(hit_center_frame - f) <= frame_tolerance
 		}
 
 		if len(distances) == 0:
-			raise ValueError("Unknown not allowed for this test")
+			raise ValueError(f"Unknown not allowed for this test, {video_metadata['video_name']}")
 			player_value = "unknown"
 		elif len(distances) == 1:
 			closest_f = min(distances, key=distances.get)
@@ -309,8 +309,6 @@ def main():
 	for idx, video_row in videos_df.iterrows():
 		video_path = video_row['video_path']
 		video_name = video_row['video_name']
-		if "20230528_VIGO_11" not in video_name:
-			continue
 		video_name_with_ext = video_row['video_name_with_ext']
 		ext = video_row['video_extension']
 		# Extract rally_id from filename (assuming it is embedded)
