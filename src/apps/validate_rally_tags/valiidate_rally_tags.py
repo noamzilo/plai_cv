@@ -5,6 +5,16 @@ import pandas as pd
 import validate_rally_data_config as config
 
 VIDEO_EXTENSIONS = [".mp4", ".MP4", ".avi", ".mkv"]
+def _validate_order(group, starts, ends, video_name, label):
+	starts_values = group[starts].values
+	ends_values = group[ends].values
+
+	bad_idx = (starts_values[1:] < ends_values[:-1]).nonzero()[0]
+	if len(bad_idx) > 0:
+		print(f"{label} ORDER ERROR in video: {video_name} ({len(bad_idx)} issues)")
+		for i in bad_idx:
+			print(f"    Row {i}:   end={ends_values[i]:.2f}  -> next start={starts_values[i+1]:.2f}")
+		assert False, f"{label} ORDER ERROR in video: {video_name} ({len(bad_idx)} issues)"
 
 
 def load_annotations():
@@ -14,7 +24,30 @@ def load_annotations():
 	hits_df = pd.read_csv(config.HITS_CSV)
 	hit_assignments_df = pd.read_excel(config.HIT_ASSIGNMENTS_XLSX)
 
+	# Sort hits_df by filename and start
+	hits_df = hits_df.sort_values(
+		by=["filename", "start"],
+		ascending=[True, True]
+	).reset_index(drop=True)
+
+	# Validate hits_df
+	for video_name, group in hits_df.groupby("filename"):
+		_validate_order(group, "start", "end", video_name, "HIT")
+
+	# Sort and validate hit_assignments_df
+	hit_assignments_df = hit_assignments_df.sort_values(
+		by=["video", "timestamp"],
+		ascending=[True, True]
+	).reset_index(drop=True)
+
+	for video_name, group in hit_assignments_df.groupby("video"):
+		_validate_order(group, "timestamp", "timestamp", video_name, "ASSIGNMENT")
+
+	print(f"Loaded {len(rallies_df)} rallies, {len(hits_df)} hits, {len(hit_assignments_df)} assignments")
+
 	return rallies_df, hits_df, hit_assignments_df
+
+
 
 def load_video_metadata(video_dir):
 	video_records = []
