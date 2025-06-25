@@ -9,13 +9,21 @@ def _validate_order(group, starts, ends, video_name, label):
 	starts_values = group[starts].values
 	ends_values = group[ends].values
 
-	bad_idx = (starts_values[1:] < ends_values[:-1]).nonzero()[0]
-	if len(bad_idx) > 0:
-		print(f"{label} ORDER ERROR in video: {video_name} ({len(bad_idx)} issues)")
-		for i in bad_idx:
-			print(f"    Row {i}:   end={ends_values[i]:.2f}  -> next start={starts_values[i+1]:.2f}")
-		assert False, f"{label} ORDER ERROR in video: {video_name} ({len(bad_idx)} issues)"
+	bad_idx_start = (starts_values[1:] < starts_values[:-1]).nonzero()[0]
+	bad_idx_end = (ends_values[1:] < ends_values[:-1]).nonzero()[0]
 
+	if len(bad_idx_start) > 0:
+		print(f"{label} START ORDER ERROR in video: {video_name} ({len(bad_idx_start)} issues)")
+		for i in bad_idx_start:
+			print(f"    Row {i}:   start={starts_values[i]:.2f}  -> next start={starts_values[i+1]:.2f}")
+
+	if len(bad_idx_end) > 0:
+		print(f"{label} END ORDER ERROR in video: {video_name} ({len(bad_idx_end)} issues)")
+		for i in bad_idx_end:
+			print(f"    Row {i}:   end={ends_values[i]:.2f}  -> next end={ends_values[i+1]:.2f}")
+
+	if len(bad_idx_start) > 0 or len(bad_idx_end) > 0:
+		assert False, f"{label} ORDER ERROR in video: {video_name} (start: {len(bad_idx_start)}, end: {len(bad_idx_end)})"
 
 def load_annotations():
 	print(f"Loading: {config.RALLIES_CSV}, {config.HITS_CSV}, {config.HIT_ASSIGNMENTS_XLSX}")
