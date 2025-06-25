@@ -1,0 +1,3 @@
+[submodule "sed-crnn"]
+	path = sed-crnn
+	url = git@github.com:noamzilo/sed-crnn.git
