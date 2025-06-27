@@ -19,6 +19,7 @@ scikit-learn = "*"
 librosa = "*"
 llvmlite = "*"
 numba = "*"
+lightning = "^2.5.2"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
