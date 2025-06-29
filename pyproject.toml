@@ -20,6 +20,7 @@ librosa = "*"
 llvmlite = "*"
 numba = "*"
 lightning = "^2.5.2"
+moviepy = {extras = ["all"], version = "^2.2.1"}
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
