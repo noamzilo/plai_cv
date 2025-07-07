@@ -15,27 +15,38 @@ tracking_dir.mkdir(exist_ok=True)
 TRACKING_CSV = tracking_dir / f"player_tracks_{test_video_name}.csv"
 VISUALIZATION_VIDEO = tracking_dir / f"tracking_overlay_{test_video_name}"
 TEAM_TRACKING_CSV = tracking_dir / f"player_team_tracks_{test_video_name}.csv"
+DETECTIONS_CSV = tracking_dir / f"player_detections_{test_video_name}.csv"
 
 def main():
-    # Step 1: Track players using YOLOv8 and save to CSV
     detector = PlayerDetection()
-    if TRACKING_CSV.is_file():
-        tracking_df = pd.read_csv(TRACKING_CSV)
-    else:
-        tracking_df = detector.track_and_save(VIDEO_PATH, TRACKING_CSV)
 
+    # Step 1: Detect players and save detections (no tracking)
+    if DETECTIONS_CSV.is_file():
+        detections_df = pd.read_csv(DETECTIONS_CSV)
+    else:
+        detections_df = detector.detect_and_save(VIDEO_PATH, DETECTIONS_CSV)
+        print(f"Saved player detections to {DETECTIONS_CSV}")
+
+    # Step 2: Run custom PlayerTracker on detections to assign consistent IDs and teams
+    tracker = PlayerTracker()
+    tracks_df = tracker.run_tracking(detections_df)
+
+    # Save tracker outputs
+    tracks_df.to_csv(TRACKING_CSV, index=False)
     print(f"Saved player tracks to {TRACKING_CSV}")
 
-    # Step 2: Assign teams and consistent IDs using PlayerTracker
-    tracker = PlayerTracker()
-    team_tracking_df = tracker.run_tracking(tracking_df)
+    # Optionally, convert to wide format and save
+    team_tracking_df = PlayerTracker.tracks_to_team_df(tracks_df)
     team_tracking_df.to_csv(TEAM_TRACKING_CSV, index=False)
     print(f"Saved team/ID assigned tracks to {TEAM_TRACKING_CSV}")
 
-    # Step 3: Visualize tracking results (using original tracking_df for bounding boxes)
-    visualizer = TrackingVisualizer(VIDEO_PATH, tracking_df)
-    visualizer.visualize_and_save(VISUALIZATION_VIDEO)
-    print(f"Saved visualization video to {VISUALIZATION_VIDEO}")
+    # Step 3: Visualize tracking results using the assigned track IDs
+    if VISUALIZATION_VIDEO.is_file():
+        print(f"Visualization video already exists at {VISUALIZATION_VIDEO}")
+    else:
+        visualizer = TrackingVisualizer(VIDEO_PATH, tracks_df)
+        visualizer.visualize_and_save(VISUALIZATION_VIDEO)
+        print(f"Saved visualization video to {VISUALIZATION_VIDEO}")
 
 if __name__ == "__main__":
     main() 

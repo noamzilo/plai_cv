@@ -72,4 +72,44 @@ class PlayerDetection:
     def detect_and_save(self, video_path: Path, output_csv: Path) -> pd.DataFrame:
         df = self.detect_video(video_path)
         df.to_csv(output_csv, index=False)
+        return df
+
+    def detect_and_save_no_tracking(self, video_path: Path, output_csv: Path) -> pd.DataFrame:
+        """
+        Run YOLOv8 detection (no tracking) on a video and save results to CSV. Returns DataFrame with columns:
+        frame, x1, y1, x2, y2, conf
+        """
+        df = self.detect_video(video_path)
+        df.to_csv(output_csv, index=False)
+        return df
+
+    def track_and_save(self, video_path: Path, output_csv: Path, tracker: str = 'bytetrack.yaml') -> pd.DataFrame:
+        """
+        Run YOLOv8 tracking on a video and save results to CSV. Returns DataFrame with columns:
+        frame, track_id, x1, y1, x2, y2, conf
+        Only includes person class.
+        """
+        print("Starting YOLOv8 tracking...")
+        results = self.model.track(source=str(video_path), tracker=tracker, stream=True, verbose=True)
+        detections = []
+        for frame_idx, result in tqdm(enumerate(results), desc='Tracking frames'):
+            boxes = result.boxes
+            ids = getattr(boxes, 'id', None)
+            for i, r in enumerate(boxes):
+                if int(r.cls[0]) == 0:  # person class
+                    x1, y1, x2, y2 = map(int, r.xyxy[0])
+                    conf = float(r.conf[0])
+                    track_id = int(ids[i]) if ids is not None else -1
+                    detections.append({
+                        "frame": frame_idx,
+                        "track_id": track_id,
+                        "x1": x1,
+                        "y1": y1,
+                        "x2": x2,
+                        "y2": y2,
+                        "conf": conf
+                    })
+        df = pd.DataFrame(detections)
+        df.to_csv(output_csv, index=False)
+        print(f"Tracking complete. Saved to {output_csv}")
         return df 

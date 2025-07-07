@@ -2,7 +2,6 @@ import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
 from tqdm import tqdm  # type: ignore
 from typing import List, Dict, Tuple
-from scipy.optimize import linear_sum_assignment
 
 class PlayerTracker:
     """
@@ -36,31 +35,26 @@ class PlayerTracker:
         # Group detections by frame
         grouped = detections_df.groupby("frame")
         frame_indices = sorted(grouped.groups.keys())
-        # Initialize slot memory
         side_slots = {"close": [0, 1], "far": [2, 3]}
         slot_team = {0: "close", 1: "close", 2: "far", 3: "far"}
         last_positions = {pid: (np.nan, np.nan) for pid in range(self.num_players)}
-        # Keep a history of positions for each slot
         position_history = {pid: [] for pid in range(self.num_players)}
         last_active = {pid: -1 for pid in range(self.num_players)}
-        records = []
+        track_records: List[Dict] = []
         for frame_idx in frame_indices:
             dets = grouped.get_group(frame_idx)
-            # Compute (cx, cy) for each detection
             det_list = []
             for _, row in dets.iterrows():
                 bbox = (row["x1"], row["y1"], row["x2"], row["y2"])
                 cx, cy = self._bbox_middle_bottom(bbox)
                 team = "close" if self._is_below_net(cx, cy) else "far"
                 det_list.append({"bbox": bbox, "cx": cx, "cy": cy, "team": team})
-            # Assign detections to slots
             assigned = set()
             slot_assignment = {pid: None for pid in range(self.num_players)}
             # 1. Try to match detections to previous slots by proximity and team
             for pid in range(self.num_players):
                 prev_cx, prev_cy = last_positions[pid]
                 team = slot_team[pid]
-                # Find closest detection on same team not yet assigned
                 min_dist = float("inf")
                 min_det = None
                 min_idx = -1
@@ -76,7 +70,6 @@ class PlayerTracker:
                     slot_assignment[pid] = min_det
                     assigned.add(min_idx)
                     last_positions[pid] = (min_det["cx"], min_det["cy"])
-                    # Update history
                     position_history[pid].append((min_det["cx"], min_det["cy"]))
                     if len(position_history[pid]) > self.history_length:
                         position_history[pid] = position_history[pid][-self.history_length:]
@@ -86,79 +79,82 @@ class PlayerTracker:
                 empty_slots = [pid for pid in side_slots[team] if slot_assignment[pid] is None]
                 unassigned_dets = [idx for idx, det in enumerate(det_list) if det["team"] == team and idx not in assigned]
                 if len(empty_slots) > 1 and len(unassigned_dets) > 1:
-                    # Predict positions for each empty slot
-                    pred_positions = []
+                    remaining_dets = set(unassigned_dets)
                     for pid in empty_slots:
                         hist = position_history[pid]
                         if len(hist) >= 2:
-                            # Linear extrapolation
                             (x1, y1), (x2, y2) = hist[-2], hist[-1]
-                            pred_x = x2 + (x2 - x1)
-                            pred_y = y2 + (y2 - y1)
+                            pred = (x2 + (x2 - x1), y2 + (y2 - y1))
                         elif len(hist) == 1:
-                            pred_x, pred_y = hist[-1]
+                            pred = hist[-1]
                         else:
-                            pred_x, pred_y = np.nan, np.nan
-                        pred_positions.append((pred_x, pred_y))
-                    # Build cost matrix
-                    det_positions = [(det_list[idx]["cx"], det_list[idx]["cy"]) for idx in unassigned_dets]
-                    cost_matrix = np.zeros((len(empty_slots), len(unassigned_dets)))
-                    for i, (px, py) in enumerate(pred_positions):
-                        for j, (dx, dy) in enumerate(det_positions):
-                            if np.isnan(px) or np.isnan(dx):
-                                cost_matrix[i, j] = 1e6
-                            else:
-                                cost_matrix[i, j] = np.hypot(dx - px, dy - py)
-                    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-                    for i, j in zip(row_ind, col_ind):
-                        pid = empty_slots[i]
-                        idx = unassigned_dets[j]
+                            pred = (np.nan, np.nan)
+                        best_idx = None
+                        best_dist = float("inf")
+                        for idx in list(remaining_dets):
+                            dx, dy = det_list[idx]["cx"], det_list[idx]["cy"]
+                            dist = np.hypot(dx - pred[0], dy - pred[1]) if not np.isnan(pred[0]) else 0
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_idx = idx
+                        if best_idx is not None:
+                            idx = best_idx
                         det = det_list[idx]
                         slot_assignment[pid] = det
                         assigned.add(idx)
+                        remaining_dets.remove(idx)
                         last_positions[pid] = (det["cx"], det["cy"])
                         position_history[pid].append((det["cx"], det["cy"]))
                         if len(position_history[pid]) > self.history_length:
                             position_history[pid] = position_history[pid][-self.history_length:]
                         last_active[pid] = frame_idx
-                else:
-                    # Assign by left-right order as fallback
-                    for idx in unassigned_dets:
-                        det = det_list[idx]
-                        empty_slots = [pid for pid in side_slots[team] if slot_assignment[pid] is None]
-                        if empty_slots:
-                            # Assign by left-right order
-                            empty_slots = sorted(empty_slots, key=lambda pid: last_positions[pid][0] if not np.isnan(last_positions[pid][0]) else det["cx"])
-                            pid = empty_slots[0]
-                            slot_assignment[pid] = det
-                            assigned.add(idx)
-                            last_positions[pid] = (det["cx"], det["cy"])
-                            position_history[pid].append((det["cx"], det["cy"]))
-                            if len(position_history[pid]) > self.history_length:
-                                position_history[pid] = position_history[pid][-self.history_length:]
-                            last_active[pid] = frame_idx
-            # 3. Build row for this frame
-            row = {"frame": frame_idx}
+            # 3. For every player, append a record (even if missing)
             for pid in range(self.num_players):
                 det = slot_assignment[pid]
                 if det is not None and isinstance(det, dict):
-                    row[f"player{pid}_x"] = det["cx"]
-                    row[f"player{pid}_y"] = det["cy"]
-                    last_positions[pid] = (det["cx"], det["cy"])
-                    position_history[pid].append((det["cx"], det["cy"]))
-                    if len(position_history[pid]) > self.history_length:
-                        position_history[pid] = position_history[pid][-self.history_length:]
+                    bbox = det["bbox"]
+                    track_records.append({
+                        "frame": frame_idx,
+                        "track_id": pid,
+                        "x1": bbox[0],
+                        "y1": bbox[1],
+                        "x2": bbox[2],
+                        "y2": bbox[3],
+                        "conf": 1.0,
+                    })
                 else:
                     # Use last known position if available, else NaN
                     last_pos = last_positions.get(pid, (np.nan, np.nan))
-                    if isinstance(last_pos, tuple) and len(last_pos) == 2:
-                        row[f"player{pid}_x"], row[f"player{pid}_y"] = last_pos
-                        last_positions[pid] = last_pos
-                    else:
-                        print(f"[DEBUG] Unexpected last_pos for pid={pid}: {last_pos}, using (np.nan, np.nan)")
-                        row[f"player{pid}_x"] = np.nan
-                        row[f"player{pid}_y"] = np.nan
-                        last_positions[pid] = (np.nan, np.nan)
+                    track_records.append({
+                        "frame": frame_idx,
+                        "track_id": pid,
+                        "x1": np.nan,
+                        "y1": np.nan,
+                        "x2": np.nan,
+                        "y2": np.nan,
+                        "conf": np.nan,
+                    })
+        tracks_df = pd.DataFrame(track_records)
+        return tracks_df
+
+    @staticmethod
+    def tracks_to_team_df(tracks_df: pd.DataFrame, num_players: int = 4) -> pd.DataFrame:
+        """
+        Convert long format tracks_df to wide format team_df (one row per frame, columns for each player's x/y).
+        """
+        # Pivot to wide format: one row per frame, columns player{pid}_x, player{pid}_y
+        frames = sorted(tracks_df['frame'].unique())
+        records = []
+        for frame in frames:
+            row = {'frame': frame}
+            frame_tracks = tracks_df[tracks_df['frame'] == frame]
+            for pid in range(num_players):
+                player_row = frame_tracks[frame_tracks['track_id'] == pid]
+                if not player_row.empty:
+                    row[f'player{pid}_x'] = player_row.iloc[0]['x1'] + (player_row.iloc[0]['x2'] - player_row.iloc[0]['x1']) / 2
+                    row[f'player{pid}_y'] = player_row.iloc[0]['y2']
+                else:
+                    row[f'player{pid}_x'] = np.nan
+                    row[f'player{pid}_y'] = np.nan
             records.append(row)
-        df = pd.DataFrame(records)
-        return df 
+        return pd.DataFrame(records) 
