@@ -52,6 +52,8 @@ class PlayerDetection:
         video_reader = VideoReader(video_path)
         detections = []
         for frame_idx, frame in video_reader.video_frames_generator():
+            if frame_idx % 50 == 0:
+                print(f"Detecting frame {frame_idx}")
             results = self.model(frame)[0]
             for r in results.boxes:
                 if int(r.cls[0]) == 0:  # person class

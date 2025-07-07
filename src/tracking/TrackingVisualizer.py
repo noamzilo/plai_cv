@@ -8,9 +8,11 @@ class TrackingVisualizer:
     """
     Visualizes tracking results by overlaying bounding boxes and player names on the video.
     """
-    def __init__(self, video_path: Path, tracking_df: pd.DataFrame):
+    def __init__(self, video_path: Path, tracking_df: pd.DataFrame, net_left=(840, 705), net_right=(2955, 751)):
         self.video_path = video_path
         self.tracking_df = tracking_df
+        self.net_left = net_left
+        self.net_right = net_right
 
     def visualize_and_save(self, output_path: Path, box_color=(0, 255, 0), thickness=2, font_scale=0.7):
         print("Starting visualization...")
@@ -27,8 +29,15 @@ class TrackingVisualizer:
         # Group tracking data by frame
         grouped = self.tracking_df.groupby('frame')
         frame_count = int(self.tracking_df['frame'].max()) + 1 if not self.tracking_df.empty else 0
-        for frame_idx, frame in tqdm(video_reader.video_frames_generator(), total=frame_count, desc='Visualizing frames'):
+        magenta = (255, 0, 255)
+        for frame_idx, frame in tqdm(video_reader.video_frames_generator(), total=frame_count, desc=f'Visualizing frames (0/{frame_count})'):
+            if frame_idx % 50 == 0:
+                print(f"Visualizing frame {frame_idx}/{frame_count}")
             frame_draw = frame.copy()
+            # Draw the net line in magenta
+            net_left_int = (int(self.net_left[0]), int(self.net_left[1]))
+            net_right_int = (int(self.net_right[0]), int(self.net_right[1]))
+            cv2.line(frame_draw, net_left_int, net_right_int, magenta, 2)
             if frame_idx in grouped.groups:
                 rows = grouped.get_group(frame_idx)
                 for _, row in rows.iterrows():

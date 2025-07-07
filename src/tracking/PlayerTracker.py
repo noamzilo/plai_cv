@@ -41,7 +41,9 @@ class PlayerTracker:
         position_history = {pid: [] for pid in range(self.num_players)}
         last_active = {pid: -1 for pid in range(self.num_players)}
         track_records: List[Dict] = []
-        for frame_idx in frame_indices:
+        for i, frame_idx in enumerate(frame_indices):
+            if i % 50 == 0:
+                print(f"Tracking frame {i+1}/{len(frame_indices)} (frame_idx={frame_idx})")
             dets = grouped.get_group(frame_idx)
             det_list = []
             for _, row in dets.iterrows():

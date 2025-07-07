@@ -40,7 +40,7 @@ def main():
 	print(f"Saved player positions to {TRACKING_CSV}")
 
 	# Step 3: Visualize tracking results
-	visualizer = TrackingVisualizer(VIDEO_PATH, tracking_df)
+	visualizer = TrackingVisualizer(VIDEO_PATH, tracking_df, net_left=net_left, net_right=net_right)
 	visualizer.visualize_and_save(VISUALIZATION_VIDEO)
 
 if __name__ == "__main__":

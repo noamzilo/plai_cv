@@ -44,7 +44,7 @@ def main():
     if VISUALIZATION_VIDEO.is_file():
         print(f"Visualization video already exists at {VISUALIZATION_VIDEO}")
     else:
-        visualizer = TrackingVisualizer(VIDEO_PATH, tracks_df)
+        visualizer = TrackingVisualizer(VIDEO_PATH, tracks_df, net_left=tracker.net_left, net_right=tracker.net_right)
         visualizer.visualize_and_save(VISUALIZATION_VIDEO)
         print(f"Saved visualization video to {VISUALIZATION_VIDEO}")
 
