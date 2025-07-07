@@ -1,87 +1,80 @@
 import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
-from deep_sort_realtime.deepsort_tracker import DeepSort  # type: ignore
-from typing import Optional, List, Dict, Tuple
-import cv2  # type: ignore
-from pathlib import Path
+from tqdm import tqdm  # type: ignore
+from typing import List, Dict, Tuple
 
 class PlayerTracker:
     """
-    Player tracker using ByteTrack or DeepSORT (via deep_sort_realtime).
-    Assigns consistent IDs and teams.
+    Player tracker for assigning consistent IDs and teams.
+    Input: DataFrame with columns: frame, track_id, x1, y1, x2, y2, conf (from YOLOv8 tracking)
     Output: DataFrame with one row per frame, columns for each player's (x, y) position.
     The net is defined by two points (net_left, net_right) as (x, y) tuples.
-    tracker_type: 'bytetrack' (default) or 'deepsort'
     """
-    def __init__(self, net_left: Tuple[float, float] = (840, 705), net_right: Tuple[float, float] = (2955, 751), num_players: int = 4, players_per_side: int = 2, tracker_type: str = 'bytetrack'):
+    def __init__(self, net_left: Tuple[float, float] = (840, 705), net_right: Tuple[float, float] = (2955, 751), num_players: int = 4, players_per_side: int = 2):
         self.net_left = np.array(net_left, dtype=np.float32)
         self.net_right = np.array(net_right, dtype=np.float32)
         self.num_players = num_players
         self.players_per_side = players_per_side
-        assert tracker_type in ('bytetrack', 'deepsort'), "tracker_type must be 'bytetrack' or 'deepsort'"
-        self.tracker_type = tracker_type
-        self.tracker = DeepSort(max_age=30, n_init=2, nms_max_overlap=1.0, embedder="mobilenet", half=True, bgr=True, backend=tracker_type)
 
     def _is_below_net(self, cx: float, cy: float) -> bool:
-        # Returns True if the point (cx, cy) is below the net line (using cross product)
         x1, y1 = self.net_left
         x2, y2 = self.net_right
-        # Net vector
         dx, dy = x2 - x1, y2 - y1
-        # Vector from net_left to point
         px, py = cx - x1, cy - y1
-        # Cross product (z-component)
         cross = dx * py - dy * px
-        return cross > 0  # convention: below net if cross > 0
+        return cross > 0
 
     def _bbox_middle_bottom(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
-        """Returns the (cx, cy) at the middle of the bottom of the bounding box."""
         x1, y1, x2, y2 = bbox
         cx = (x1 + x2) / 2
         cy = y2
         return cx, cy
 
-    def run_tracking(self, video_path: Path, detections_df: pd.DataFrame) -> pd.DataFrame:
-        import acquisition.VideoReader
-        VideoReader = acquisition.VideoReader.VideoReader
-        video_reader = VideoReader(video_path)
-        frames = []
-        for _, frame in video_reader.video_frames_generator():
-            frames.append(frame)
+    def run_tracking(self, detections_df: pd.DataFrame) -> pd.DataFrame:
         # Group detections by frame
         grouped = detections_df.groupby("frame")
         all_tracks = []
-        for frame_idx, frame in enumerate(frames):
-            dets = grouped.get_group(frame_idx) if frame_idx in grouped.groups else pd.DataFrame()
-            dets_arr = dets[["x1", "y1", "x2", "y2", "conf"]].values if not dets.empty else np.zeros((0, 5))
-            tracks = self.tracker.update_tracks(dets_arr, frame=frame)
+        frame_indices = sorted(grouped.groups.keys())
+        for frame_idx in tqdm(frame_indices, desc="Assigning teams/IDs"):
+            dets = grouped.get_group(frame_idx)
             frame_tracks = []
-            for t in tracks:
-                if not t.is_confirmed():
-                    continue
-                track_id = t.track_id
-                ltrb = t.to_ltrb()
+            for _, row in dets.iterrows():
+                bbox = (row["x1"], row["y1"], row["x2"], row["y2"])
+                cx, cy = self._bbox_middle_bottom(bbox)
                 frame_tracks.append({
-                    "track_id": track_id,
-                    "bbox": ltrb,
+                    "track_id": row["track_id"],
+                    "bbox": bbox,
+                    "cx": cx,
+                    "cy": cy,
                 })
             all_tracks.append(frame_tracks)
-        return self._assign_teams_and_ids(all_tracks)
+        tracking_df = self._assign_teams_and_ids(all_tracks)
+        return tracking_df
 
     def _assign_teams_and_ids(self, all_tracks: List[List[Dict]]) -> pd.DataFrame:
+        """
+        Assigns players to teams and consistent IDs for each frame.
+
+        Output DataFrame:
+            - Each row corresponds to a single video frame (indexed by 'frame').
+            - For each player slot (e.g., player0, player1, ...), the columns:
+                - 'player{pid}_x': x coordinate (middle of bottom of bounding box) for player pid in this frame
+                - 'player{pid}_y': y coordinate (middle of bottom of bounding box) for player pid in this frame
+            - If a player is not detected in a frame, their coordinates are filled with their last known position (or NaN if never seen).
+            - Players are assigned to 'close' or 'far' teams based on their position relative to the net, and sorted left-to-right within each team.
+        """
         side_slots = {"close": [0, 1], "far": [2, 3]}
         records = []
         last_positions = {pid: (np.nan, np.nan) for pid in range(self.num_players)}
         for frame_idx, tracks in enumerate(all_tracks):
             close, far = [], []
             for t in tracks:
-                bbox = t["bbox"]
-                cx, cy = self._bbox_middle_bottom(bbox)
+                cx, cy = t["cx"], t["cy"]
                 if self._is_below_net(cx, cy):
-                    close.append((t["track_id"], bbox, cx, cy))
+                    close.append((t["track_id"], t["bbox"], cx, cy))
                 else:
-                    far.append((t["track_id"], bbox, cx, cy))
-            close = sorted(close, key=lambda x: x[1][0])[:self.players_per_side]  # sort by x1
+                    far.append((t["track_id"], t["bbox"], cx, cy))
+            close = sorted(close, key=lambda x: x[1][0])[:self.players_per_side]
             far = sorted(far, key=lambda x: x[1][0])[:self.players_per_side]
             row = {"frame": frame_idx}
             for slot, player in enumerate(close):

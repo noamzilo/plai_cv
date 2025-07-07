@@ -1,7 +1,7 @@
 import cv2
 from pathlib import Path
 
-class VideoReader():
+class VideoReader:
 	def __init__(self, video_path: Path):
 		self.video_path: Path = video_path
 		assert video_path.is_file()
@@ -14,6 +14,10 @@ class VideoReader():
 		if self._average_frame is None:
 			raise ValueError("_average_frame not yet defined")
 		return self._average_frame
+
+	@property
+	def frame_rate(self) -> float:
+		return self.video.get(cv2.CAP_PROP_FPS)
 
 	def video_frames_generator(self, start_frame: int = 0, interval: int = 1, end_frame: int = -1):
 		self.video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
