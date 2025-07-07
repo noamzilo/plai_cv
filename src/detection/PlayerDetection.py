@@ -2,7 +2,7 @@ import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
 from ultralytics import YOLO  # type: ignore
 from pathlib import Path
-from acquisition.VideoReader import VideoReader
+from src.acquisition.VideoReader import VideoReader
 from typing import Optional
 
 class PlayerDetection:

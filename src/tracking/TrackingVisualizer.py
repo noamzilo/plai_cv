@@ -1,7 +1,7 @@
 import cv2  # type: ignore
 import pandas as pd  # type: ignore
 from pathlib import Path
-from acquisition.VideoReader import VideoReader
+from src.acquisition.VideoReader import VideoReader
 
 class TrackingVisualizer:
     """

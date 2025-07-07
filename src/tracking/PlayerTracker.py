@@ -34,6 +34,13 @@ class PlayerTracker:
         cross = dx * py - dy * px
         return cross > 0  # convention: below net if cross > 0
 
+    def _bbox_middle_bottom(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
+        """Returns the (cx, cy) at the middle of the bottom of the bounding box."""
+        x1, y1, x2, y2 = bbox
+        cx = (x1 + x2) / 2
+        cy = y2
+        return cx, cy
+
     def run_tracking(self, video_path: Path, detections_df: pd.DataFrame) -> pd.DataFrame:
         import acquisition.VideoReader
         VideoReader = acquisition.VideoReader.VideoReader
@@ -68,27 +75,24 @@ class PlayerTracker:
         for frame_idx, tracks in enumerate(all_tracks):
             close, far = [], []
             for t in tracks:
-                x1, y1, x2, y2 = t["bbox"]
-                cx = (x1 + x2) / 2
-                cy = (y1 + y2) / 2
+                bbox = t["bbox"]
+                cx, cy = self._bbox_middle_bottom(bbox)
                 if self._is_below_net(cx, cy):
-                    close.append((t["track_id"], x1, y1, x2, y2))
+                    close.append((t["track_id"], bbox, cx, cy))
                 else:
-                    far.append((t["track_id"], x1, y1, x2, y2))
-            close = sorted(close, key=lambda x: x[1])[:self.players_per_side]
-            far = sorted(far, key=lambda x: x[1])[:self.players_per_side]
+                    far.append((t["track_id"], bbox, cx, cy))
+            close = sorted(close, key=lambda x: x[1][0])[:self.players_per_side]  # sort by x1
+            far = sorted(far, key=lambda x: x[1][0])[:self.players_per_side]
             row = {"frame": frame_idx}
             for slot, player in enumerate(close):
                 pid = side_slots["close"][slot]
-                x1, y1, x2, y2 = player[1:]
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                _, _, cx, cy = player
                 row[f"player{pid}_x"] = cx
                 row[f"player{pid}_y"] = cy
                 last_positions[pid] = (cx, cy)
             for slot, player in enumerate(far):
                 pid = side_slots["far"][slot]
-                x1, y1, x2, y2 = player[1:]
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                _, _, cx, cy = player
                 row[f"player{pid}_x"] = cx
                 row[f"player{pid}_y"] = cy
                 last_positions[pid] = (cx, cy)

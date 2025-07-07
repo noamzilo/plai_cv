@@ -10,10 +10,10 @@ import pandas as pd
 from src.detection.PlayerDetection import PlayerDetection
 from src.tracking.PlayerTracker import PlayerTracker
 from src.tracking.TrackingVisualizer import TrackingVisualizer
-
+from src.utils.paths import project_root
 # --- CONFIG ---
-VIDEO_PATH = Path("data/proprietary/001.mp4")
-CACHE_DIR = Path("cache/bytetrack_cache")
+VIDEO_PATH = Path(project_root / "data/proprietary/001.mp4")
+CACHE_DIR = Path(project_root / "cache/bytetrack_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 DETECTIONS_CSV = CACHE_DIR / "detections.csv"
 TRACKING_CSV = CACHE_DIR / "player_positions.csv"
