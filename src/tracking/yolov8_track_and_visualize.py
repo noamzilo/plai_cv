@@ -4,7 +4,7 @@ from src.detection.PlayerDetection import PlayerDetection
 from src.tracking.TrackingVisualizer import TrackingVisualizer
 from src.utils.paths import project_root, test_video_name, output_path
 from src.tracking.PlayerTracker import PlayerTracker
-
+from typing import Tuple
 # --- CONFIG ---
 output_path.mkdir(exist_ok=True)
 VIDEO_PATH = Path(project_root / f"data/proprietary/{test_video_name}")
@@ -17,6 +17,9 @@ VISUALIZATION_VIDEO = tracking_dir / f"tracking_overlay_{test_video_name}"
 TEAM_TRACKING_CSV = tracking_dir / f"player_team_tracks_{test_video_name}.csv"
 DETECTIONS_CSV = tracking_dir / f"player_detections_{test_video_name}.csv"
 
+net_left: Tuple[float, float] = (73, 482)
+net_right: Tuple[float, float] = (1154, 490)
+
 def main():
     detector = PlayerDetection()
 
@@ -28,7 +31,7 @@ def main():
         print(f"Saved player detections to {DETECTIONS_CSV}")
 
     # Step 2: Run custom PlayerTracker on detections to assign consistent IDs and teams
-    tracker = PlayerTracker()
+    tracker = PlayerTracker(net_left=net_left, net_right=net_right)
     tracks_df = tracker.run_tracking(detections_df)
 
     # Save tracker outputs
