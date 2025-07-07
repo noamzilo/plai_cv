@@ -21,22 +21,24 @@ VISUALIZATION_VIDEO = CACHE_DIR / "tracking_overlay.mp4"
 
 
 def main():
-    # Step 1: Detect players (cache to CSV)
-    detector = PlayerDetection()
-    if DETECTIONS_CSV.is_file():
-        detections_df = pd.read_csv(DETECTIONS_CSV)
-    else:
-        detections_df = detector.detect_and_save(VIDEO_PATH, DETECTIONS_CSV)
+	# Step 1: Detect players (cache to CSV)
+	detector = PlayerDetection()
+	if DETECTIONS_CSV.is_file():
+		detections_df = pd.read_csv(DETECTIONS_CSV)
+	else:
+		detections_df = detector.detect_and_save(VIDEO_PATH, DETECTIONS_CSV)
 
-    # Step 2: Track players and assign teams/IDs
-    tracker = PlayerTracker()
-    tracking_df = tracker.run_tracking(VIDEO_PATH, detections_df)
-    tracking_df.to_csv(TRACKING_CSV, index=False)
-    print(f"Saved player positions to {TRACKING_CSV}")
+	# Step 2: Track players and assign teams/IDs
+	net_left: Tuple[float, float] = (73, 482) # hard coded for current video
+	net_right: Tuple[float, float] = (1154, 490) # hard coded for current video
+	tracker = PlayerTracker(net_left=net_left, net_right=net_right)
+	tracking_df = tracker.run_tracking(VIDEO_PATH, detections_df)
+	tracking_df.to_csv(TRACKING_CSV, index=False)
+	print(f"Saved player positions to {TRACKING_CSV}")
 
-    # Step 3: Visualize tracking results
-    visualizer = TrackingVisualizer(VIDEO_PATH, tracking_df)
-    visualizer.visualize_and_save(VISUALIZATION_VIDEO)
+	# Step 3: Visualize tracking results
+	visualizer = TrackingVisualizer(VIDEO_PATH, tracking_df)
+	visualizer.visualize_and_save(VISUALIZATION_VIDEO)
 
 if __name__ == "__main__":
-    main() 
+	main()

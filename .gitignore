@@ -180,3 +180,4 @@ cython_debug/
 /output/
 /.idea/workspace.xml
 /cache/
+/data/calculated/

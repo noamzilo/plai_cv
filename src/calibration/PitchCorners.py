@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 from pathlib import Path
-from utils.visualizations import cv2_imshow
-from utils.paths import test_video_name
+from src.utils.visualizations import cv2_imshow
+from src.utils.paths import test_video_name
 
 # ---------- main class ----------
 class PitchCorners:

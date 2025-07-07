@@ -7,16 +7,20 @@ from pathlib import Path
 
 class PlayerTracker:
     """
-    Player tracker using ByteTrack (via deep_sort_realtime). Assigns consistent IDs and teams.
+    Player tracker using ByteTrack or DeepSORT (via deep_sort_realtime).
+    Assigns consistent IDs and teams.
     Output: DataFrame with one row per frame, columns for each player's (x, y) position.
     The net is defined by two points (net_left, net_right) as (x, y) tuples.
+    tracker_type: 'bytetrack' (default) or 'deepsort'
     """
-    def __init__(self, net_left: Tuple[float, float] = (840, 705), net_right: Tuple[float, float] = (2955, 751), num_players: int = 4, players_per_side: int = 2):
+    def __init__(self, net_left: Tuple[float, float] = (840, 705), net_right: Tuple[float, float] = (2955, 751), num_players: int = 4, players_per_side: int = 2, tracker_type: str = 'bytetrack'):
         self.net_left = np.array(net_left, dtype=np.float32)
         self.net_right = np.array(net_right, dtype=np.float32)
         self.num_players = num_players
         self.players_per_side = players_per_side
-        self.tracker = DeepSort(max_age=30, n_init=2, nms_max_overlap=1.0, embedder="mobilenet", half=True, bgr=True, backend='bytetrack')
+        assert tracker_type in ('bytetrack', 'deepsort'), "tracker_type must be 'bytetrack' or 'deepsort'"
+        self.tracker_type = tracker_type
+        self.tracker = DeepSort(max_age=30, n_init=2, nms_max_overlap=1.0, embedder="mobilenet", half=True, bgr=True, backend=tracker_type)
 
     def _is_below_net(self, cx: float, cy: float) -> bool:
         # Returns True if the point (cx, cy) is below the net line (using cross product)

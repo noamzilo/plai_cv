@@ -1,10 +1,10 @@
-from utils.paths import raw_data_path, calculated_data_path
+from src.utils.paths import raw_data_path, calculated_data_path
 from pathlib import Path
 import os
 
-from calibration.VideoAverager import VideoAverager
-from calibration.PitchCorners import PitchCorners
-from utils.paths import test_video_name
+from src.calibration.VideoAverager import VideoAverager
+from src.calibration.PitchCorners import PitchCorners
+from src.utils.paths import test_video_name
 
 def main():
 	video_name = test_video_name
@@ -18,7 +18,7 @@ def main():
 	os.makedirs(video_calculated_path, exist_ok=True)
 	average_frame_name = f"average_frame.bmp"
 	average_frame_path = video_calculated_path / average_frame_name 
-	video_averager.save_average_frame(calculated_data_path / average_frame_path)
+	video_averager.save_average_frame(str(average_frame_path))
 
 	pitch_corners = PitchCorners(image_path=average_frame_path)
 	pitch_corners.calculate_corners()
