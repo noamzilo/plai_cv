@@ -40,7 +40,7 @@ class PlayerDetection:
         df.to_csv(output_csv, index=False)
         return df
 
-    def track_video(self, video_path: Path, tracker: str = 'bytetrack.yaml') -> pd.DataFrame:
+    def track_video(self, video_path: Path, tracker: str = 'deepsort.yaml') -> pd.DataFrame:
         """
         Run YOLOv8 tracking on a video. Returns DataFrame with columns:
         frame, track_id, x1, y1, x2, y2, conf
@@ -70,7 +70,7 @@ class PlayerDetection:
         df = pd.DataFrame(detections)
         return df
 
-    def track_and_save(self, video_path: Path, output_csv: Path, tracker: str = 'bytetrack.yaml') -> pd.DataFrame:
+    def track_and_save(self, video_path: Path, output_csv: Path, tracker: str = 'deepsort.yaml') -> pd.DataFrame:
         df = self.track_video(video_path, tracker=tracker)
         df.to_csv(output_csv, index=False)
         return df 
