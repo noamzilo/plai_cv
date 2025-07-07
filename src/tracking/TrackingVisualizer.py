@@ -2,6 +2,7 @@ import cv2  # type: ignore
 import pandas as pd  # type: ignore
 from pathlib import Path
 from src.acquisition.VideoReader import VideoReader
+from tqdm import tqdm
 
 class TrackingVisualizer:
     """
@@ -12,6 +13,7 @@ class TrackingVisualizer:
         self.tracking_df = tracking_df
 
     def visualize_and_save(self, output_path: Path, box_color=(0, 255, 0), thickness=2, font_scale=0.7):
+        print("Starting visualization...")
         video_reader = VideoReader(self.video_path)
         # Get video properties
         cap = cv2.VideoCapture(str(self.video_path))
@@ -24,21 +26,20 @@ class TrackingVisualizer:
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         # Group tracking data by frame
         grouped = self.tracking_df.groupby('frame')
-        for frame_idx, frame in video_reader.video_frames_generator():
+        frame_count = int(self.tracking_df['frame'].max()) + 1 if not self.tracking_df.empty else 0
+        for frame_idx, frame in tqdm(video_reader.video_frames_generator(), total=frame_count, desc='Visualizing frames'):
             frame_draw = frame.copy()
             if frame_idx in grouped.groups:
-                row = grouped.get_group(frame_idx)
-                for pid in range(4):
-                    x_col = f'player{pid}_x'
-                    y_col = f'player{pid}_y'
-                    if x_col in row and y_col in row:
-                        x = int(row[x_col].values[0])
-                        y = int(row[y_col].values[0])
-                        # Draw a circle at the player's position
-                        cv2.circle(frame_draw, (x, y), 20, box_color, thickness)
-                        # Draw player name
-                        cv2.putText(frame_draw, f'Player {pid}', (x + 10, y - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, box_color, 2)
+                rows = grouped.get_group(frame_idx)
+                for _, row in rows.iterrows():
+                    x1, y1, x2, y2 = int(row['x1']), int(row['y1']), int(row['x2']), int(row['y2'])
+                    track_id = int(row['track_id']) if 'track_id' in row else -1
+                    # Draw bounding box
+                    cv2.rectangle(frame_draw, (x1, y1), (x2, y2), box_color, thickness)
+                    # Draw track_id label
+                    label = f'ID {track_id}'
+                    cv2.putText(frame_draw, label, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, font_scale, box_color, 2)
             out.write(frame_draw)
         out.release()
         print(f"Saved visualization video to {output_path}") 

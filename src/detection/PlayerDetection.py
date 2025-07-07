@@ -4,6 +4,7 @@ from ultralytics import YOLO  # type: ignore
 from pathlib import Path
 from src.acquisition.VideoReader import VideoReader
 from typing import Optional
+from tqdm import tqdm
 
 class PlayerDetection:
     """
@@ -45,9 +46,10 @@ class PlayerDetection:
         frame, track_id, x1, y1, x2, y2, conf
         Only includes person class.
         """
-        results = self.model.track(source=str(video_path), tracker=tracker, stream=True, verbose=False)
+        print("Starting YOLOv8 tracking...")
+        results = self.model.track(source=str(video_path), tracker=tracker, stream=True, verbose=True)
         detections = []
-        for frame_idx, result in enumerate(results):
+        for frame_idx, result in tqdm(enumerate(results), desc='Tracking frames'):
             boxes = result.boxes
             ids = getattr(boxes, 'id', None)
             for i, r in enumerate(boxes):
@@ -64,6 +66,7 @@ class PlayerDetection:
                         "y2": y2,
                         "conf": conf
                     })
+        print("Tracking complete.")
         df = pd.DataFrame(detections)
         return df
 

@@ -3,6 +3,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 print(f"project_root: {project_root}")
 data_path = project_root / "data"
+output_path = project_root / "output"
 print(f"data_path: {data_path}")
 raw_data_path = project_root / "data" / "proprietary"
 calculated_data_path = project_root / "data" / "calculated"
