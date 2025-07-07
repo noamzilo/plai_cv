@@ -11,7 +11,7 @@ CACHE_DIR = Path(project_root / "cache/yolov8_tracking_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 tracking_dir = output_path / "tracking"
 tracking_dir.mkdir(exist_ok=True)
-TRACKING_CSV = tracking_dir / "player_tracks_{test_video_name}.csv"
+TRACKING_CSV = tracking_dir / f"player_tracks_{test_video_name}.csv"
 VISUALIZATION_VIDEO = tracking_dir / f"tracking_overlay_{test_video_name}"
 
 def main():

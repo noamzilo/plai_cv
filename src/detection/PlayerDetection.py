@@ -5,15 +5,48 @@ from pathlib import Path
 from src.acquisition.VideoReader import VideoReader
 from typing import Optional
 from tqdm import tqdm
+from matplotlib.path import Path as MplPath
 
 class PlayerDetection:
     """
     Player detector using YOLOv8. Outputs a DataFrame with one row per detection and columns:
     frame, x1, y1, x2, y2, conf
     """
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: Optional[str] = None, pitch_polygon: Optional[np.ndarray] = None):
         self.model_path = model_path or "yolov8n.pt"
         self.model = YOLO(self.model_path)
+        # Default polygon if none provided
+        if pitch_polygon is None:
+            self._pitch_polygon = np.array([
+                [70, 319],
+                [82, 1079],
+                [1919, 1079],
+                [1919, 738],
+                [740, 370],
+                [70, 319]
+            ])
+        else:
+            self._pitch_polygon = pitch_polygon
+        self._pitch_path = MplPath(self._pitch_polygon)
+
+    def _is_inside_pitch(self, px: float, py: float) -> bool:
+        """
+        Returns True if the point (px, py) is inside the pitch polygon.
+        """
+        return self._pitch_path.contains_point((px, py))
+
+    def filter_detections_by_pitch(self, detections: list[dict]) -> list[dict]:
+        """
+        Filters detections to only those whose bottom center is inside the pitch polygon.
+        Each detection is a dict with x1, y1, x2, y2.
+        """
+        filtered = []
+        for det in detections:
+            bx = (det["x1"] + det["x2"]) / 2
+            by = det["y2"]  # bottom center
+            if self._is_inside_pitch(bx, by):
+                filtered.append(det)
+        return filtered
 
     def detect_video(self, video_path: Path) -> pd.DataFrame:
         video_reader = VideoReader(video_path)
@@ -32,6 +65,7 @@ class PlayerDetection:
                         "y2": y2,
                         "conf": conf
                     })
+        detections = self.filter_detections_by_pitch(detections)
         df = pd.DataFrame(detections)
         return df
 
@@ -40,7 +74,7 @@ class PlayerDetection:
         df.to_csv(output_csv, index=False)
         return df
 
-    def track_video(self, video_path: Path, tracker: str = 'deepsort.yaml') -> pd.DataFrame:
+    def track_video(self, video_path: Path, tracker: str = 'bytetrack.yaml') -> pd.DataFrame:
         """
         Run YOLOv8 tracking on a video. Returns DataFrame with columns:
         frame, track_id, x1, y1, x2, y2, conf
@@ -66,11 +100,12 @@ class PlayerDetection:
                         "y2": y2,
                         "conf": conf
                     })
+        detections = self.filter_detections_by_pitch(detections)
         print("Tracking complete.")
         df = pd.DataFrame(detections)
         return df
 
-    def track_and_save(self, video_path: Path, output_csv: Path, tracker: str = 'deepsort.yaml') -> pd.DataFrame:
+    def track_and_save(self, video_path: Path, output_csv: Path, tracker: str = 'bytetrack.yaml') -> pd.DataFrame:
         df = self.track_video(video_path, tracker=tracker)
         df.to_csv(output_csv, index=False)
         return df 
