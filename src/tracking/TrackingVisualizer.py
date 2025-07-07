@@ -32,6 +32,9 @@ class TrackingVisualizer:
             if frame_idx in grouped.groups:
                 rows = grouped.get_group(frame_idx)
                 for _, row in rows.iterrows():
+                    # Skip if any coordinate is NaN
+                    if any(pd.isna(row[c]) for c in ['x1', 'y1', 'x2', 'y2']):
+                        continue
                     x1, y1, x2, y2 = int(row['x1']), int(row['y1']), int(row['x2']), int(row['y2'])
                     track_id = int(row['track_id']) if 'track_id' in row else -1
                     # Draw bounding box
