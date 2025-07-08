@@ -181,3 +181,4 @@ cython_debug/
 /.idea/workspace.xml
 /cache/
 /data/calculated/
+/data
