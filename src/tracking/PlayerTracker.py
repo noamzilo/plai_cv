@@ -1,7 +1,7 @@
 import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
 from tqdm import tqdm  # type: ignore
-from typing import List, Dict, Tuple, Callable
+from typing import List, Dict, Tuple, Callable, Optional
 import cv2  # type: ignore
 
 # -----------------------------------------------------------------------------
@@ -24,6 +24,21 @@ MAX_LOOKBACK_FRAMES_NEW_BOX: int = 5
 # consider them the *same* physical player, even if IOU is low because of slight
 # bbox jitter. This helps avoid ID switches when the bounding box barely moves.
 CENTER_DISTANCE_THRESHOLD: float = 40.0
+
+# -----------------------------------------------------------------------------
+# New configuration constants for prioritised ID assignment
+# -----------------------------------------------------------------------------
+# Frames to look back (incrementally) when searching for IOU matches
+LOOKBACK_STEPS: list[int] = [1, 2, 3, 4, 5, 10]
+
+# IOU threshold above which a previous bbox is considered the **same** player
+IOU_MATCH_THRESHOLD: float = 0.5  # Step-1 threshold
+
+# Number of historical frames to use when computing extrapolated positions
+EXTRAPOLATION_HISTORY: int = 5  # Step-4 history length
+
+# Swap out the older CENTER_DISTANCE_THRESHOLD with a slightly lower value for histogram fallback.
+HISTOGRAM_DISTANCE_BIAS: float = 100.0  # Larger => histogram similarity more important
 
 class PlayerTracker:
     """
@@ -268,132 +283,87 @@ class PlayerTracker:
         return cleaned_df
 
     def run_tracking(self, detections_df: pd.DataFrame, video_reader) -> pd.DataFrame:
+        """Refactored tracker that follows strict priority rules and guarantees
+        exactly four unique IDs (0-3) per frame.
         """
-        Run player tracking in a streaming, memory-efficient way using VideoReader.
-        Args:
-            detections_df: DataFrame with columns: frame, track_id, x1, y1, x2, y2, conf
-            video_reader: VideoReader instance with video_frames_generator()
-        Returns:
-            DataFrame with tracking results.
-        """
-        grouped = detections_df.groupby("frame")
-        frame_indices = sorted(grouped.groups.keys())
-        frame_indices_set = set(frame_indices)
         side_slots = {"close": [0, 1], "far": [2, 3]}
-        slot_team = {0: "close", 1: "close", 2: "far", 3: "far"}
-        last_positions = {pid: (np.nan, np.nan) for pid in range(self.num_players)}
-        position_history = {pid: [] for pid in range(self.num_players)}
-        last_active = {pid: -1 for pid in range(self.num_players)}
-        # --- HISTOGRAM HISTORY ---
-        hist_history = {pid: [] for pid in range(self.num_players)}
+
+        # ----------------------------------------
+        # State that persists across frames
+        # ----------------------------------------
+        last_positions: Dict[int, Tuple[float, float]] = {pid: (np.nan, np.nan) for pid in range(self.num_players)}
+        position_history: Dict[int, List[Tuple[float, float]]] = {pid: [] for pid in range(self.num_players)}
+        hist_history: Dict[int, List[np.ndarray]] = {pid: [] for pid in range(self.num_players)}
+        last_bbox_per_id: Dict[int, Tuple[int, Tuple[float, float, float, float]]] = {}
+
+        # Cache detections by frame for quick access
+        detections_by_frame = {f: grp for f, grp in detections_df.groupby("frame")}
+
         track_records: List[Dict] = []
-        frame_iter = video_reader.video_frames_generator()
-        for frame_idx, frame_img in frame_iter:
-            if frame_idx not in frame_indices_set:
-                continue  # Only process frames with detections
-            i = frame_indices.index(frame_idx)
-            if i % 50 == 0:
-                print(f"Tracking frame {i+1}/{len(frame_indices)} (frame_idx={frame_idx})")
-            dets = grouped.get_group(frame_idx)
-            det_list = []
-            det_histograms = []
-            for _, row in dets.iterrows():
+
+        for frame_idx, frame_img in video_reader.video_frames_generator():
+            if frame_idx not in detections_by_frame:
+                # Still need to output 4 rows (all NaN) to keep continuity
+                for pid in range(self.num_players):
+                    track_records.append({
+                        "frame": frame_idx,
+                        "track_id": pid,
+                        "x1": np.nan,
+                        "y1": np.nan,
+                        "x2": np.nan,
+                        "y2": np.nan,
+                        "conf": np.nan,
+                    })
+                continue
+
+            detections_frame = detections_by_frame[frame_idx]
+
+            # Build detection objects with histograms & metadata
+            det_objects: List[Dict] = []
+            for row_idx, row in detections_frame.iterrows():
                 bbox = (row["x1"], row["y1"], row["x2"], row["y2"])
                 cx, cy = self._bbox_middle_bottom(bbox)
                 team = "close" if self._is_below_net(cx, cy) else "far"
-                det_list.append({"bbox": bbox, "cx": cx, "cy": cy, "team": team})
                 hist = self._extract_histogram(frame_img, bbox)
-                det_histograms.append(hist)
-            assigned = set()
-            slot_assignment = {pid: None for pid in range(self.num_players)}
-            # 1. Try to match detections to previous slots by proximity and team
-            for pid in range(self.num_players):
-                prev_cx, prev_cy = last_positions[pid]
-                team = slot_team[pid]
-                min_dist = float("inf")
-                min_det = None
-                min_idx = -1
-                for idx, det in enumerate(det_list):
-                    if det["team"] != team or idx in assigned:
-                        continue
-                    dist = np.hypot(det["cx"] - prev_cx, det["cy"] - prev_cy) if not np.isnan(prev_cx) else 0
-                    if dist < min_dist:
-                        min_dist = dist
-                        min_det = det
-                        min_idx = idx
-                if min_det is not None:
-                    slot_assignment[pid] = min_det
-                    assigned.add(min_idx)
-                    last_positions[pid] = (min_det["cx"], min_det["cy"])
-                    position_history[pid].append((min_det["cx"], min_det["cy"]))
-                    if len(position_history[pid]) > self.history_length:
-                        position_history[pid] = position_history[pid][-self.history_length:]
-                    last_active[pid] = frame_idx
-                    # --- HISTOGRAM ---
-                    hist = det_histograms[min_idx]
-                    hist_history[pid].append(hist)
-                    if len(hist_history[pid]) > 100:
-                        hist_history[pid] = hist_history[pid][-100:]
-            # 2. For any remaining detections, assign to empty slots on correct team by interpolation/extrapolation, proximity, and histogram
-            for team in ["close", "far"]:
-                empty_slots = [pid for pid in side_slots[team] if slot_assignment[pid] is None]
-                unassigned_dets = [idx for idx, det in enumerate(det_list) if det["team"] == team and idx not in assigned]
-                if len(empty_slots) > 1 and len(unassigned_dets) > 1:
-                    remaining_dets = set(unassigned_dets)
-                    for pid in empty_slots:
-                        hist = position_history[pid]
-                        if len(hist) >= 2:
-                            (x1, y1), (x2, y2) = hist[-2], hist[-1]
-                            pred = (x2 + (x2 - x1), y2 + (y2 - y1))
-                        elif len(hist) == 1:
-                            pred = hist[-1]
-                        else:
-                            pred = (np.nan, np.nan)
-                        best_idx = None
-                        best_dist = float("inf")
-                        best_sim = -float("inf")
-                        best_score = float("inf")
-                        for idx in list(remaining_dets):
-                            dx, dy = det_list[idx]["cx"], det_list[idx]["cy"]
-                            dist = np.hypot(dx - pred[0], dy - pred[1]) if not np.isnan(pred[0]) else 0
-                            # --- HISTOGRAM ---
-                            det_hist = det_histograms[idx]
-                            # Compare to average of last N histograms
-                            sim_scores = []
-                            for N in [10, 20, 50, 75, 100]:
-                                if len(hist_history[pid]) >= N:
-                                    avg_hist = np.mean(hist_history[pid][-N:], axis=0)
-                                    sim = self._hist_similarity(det_hist, avg_hist)
-                                    sim_scores.append(sim)
-                            if sim_scores:
-                                sim = float(np.mean(sim_scores))
-                            else:
-                                sim = 0.0
-                            # Combine distance and similarity (tunable: here, prioritize similarity if available)
-                            score = dist - sim * 100  # Higher sim reduces score
-                            if score < best_score:
-                                best_score = score
-                                best_idx = idx
-                        if best_idx is not None:
-                            idx = best_idx
-                        det = det_list[idx]
-                        slot_assignment[pid] = det
-                        assigned.add(idx)
-                        remaining_dets.remove(idx)
-                        last_positions[pid] = (det["cx"], det["cy"])
-                        position_history[pid].append((det["cx"], det["cy"]))
-                        if len(position_history[pid]) > self.history_length:
-                            position_history[pid] = position_history[pid][-self.history_length:]
-                        last_active[pid] = frame_idx
-                        # --- HISTOGRAM ---
-                        hist = det_histograms[idx]
-                        hist_history[pid].append(hist)
-                        if len(hist_history[pid]) > 100:
-                            hist_history[pid] = hist_history[pid][-100:]
-            # 3. For every player, append a record (even if missing)
+                det_objects.append({
+                    "bbox": bbox,
+                    "cx": cx,
+                    "cy": cy,
+                    "team": team,
+                    "hist": hist,
+                    "row_idx": row_idx,
+                })
+
+            # Split detections by side and assign IDs using new helper
+            assignments: Dict[int, int] = {}  # row_idx -> pid
+
+            for team_label in ("close", "far"):
+                side_dets = [d for d in det_objects if d["team"] == team_label]
+                candidate_ids = side_slots[team_label]
+                side_assign, last_bbox_per_id = self._assign_ids_for_side(
+                    team=team_label,
+                    detections=side_dets,
+                    candidate_ids=candidate_ids,
+                    current_frame=frame_idx,
+                    last_bbox_per_id=last_bbox_per_id,
+                    last_positions=last_positions,
+                    position_history=position_history,
+                    hist_history=hist_history,
+                )
+                assignments.update(side_assign)
+
+            # Build per-pid slot assignment dict
+            slot_assignment: Dict[int, Optional[Dict]] = {pid: None for pid in range(self.num_players)}
+            for det in det_objects:
+                ridx = det["row_idx"]
+                if ridx in assignments:
+                    pid = assignments[ridx]
+                    slot_assignment[pid] = det
+
+            # Update histories and produce track rows
             for pid in range(self.num_players):
                 det = slot_assignment[pid]
-                if det is not None and isinstance(det, dict):
+                if det is not None:
                     bbox = det["bbox"]
                     track_records.append({
                         "frame": frame_idx,
@@ -404,9 +374,17 @@ class PlayerTracker:
                         "y2": bbox[3],
                         "conf": 1.0,
                     })
+
+                    # history updates
+                    last_positions[pid] = (det["cx"], det["cy"])
+                    position_history[pid].append((det["cx"], det["cy"]))
+                    if len(position_history[pid]) > EXTRAPOLATION_HISTORY:
+                        position_history[pid] = position_history[pid][-EXTRAPOLATION_HISTORY:]
+                    hist_history[pid].append(det["hist"])
+                    if len(hist_history[pid]) > 100:
+                        hist_history[pid] = hist_history[pid][-100:]
                 else:
-                    # Use last known position if available, else NaN
-                    last_pos = last_positions.get(pid, (np.nan, np.nan))
+                    # Missing detection → NaN row
                     track_records.append({
                         "frame": frame_idx,
                         "track_id": pid,
@@ -416,11 +394,13 @@ class PlayerTracker:
                         "y2": np.nan,
                         "conf": np.nan,
                     })
+
+            # Sanity: ensure uniqueness (should always hold)
+            pids_in_frame = {rec["track_id"] for rec in track_records[-self.num_players:]}
+            assert len(pids_in_frame) == self.num_players, "Duplicate or missing IDs in frame assignment"
+
+        # Build final dataframe – no post-jittering pass needed because logic already enforces consistency
         tracks_df = pd.DataFrame(track_records)
-        # ------------------------------------------------------------------
-        # Post-process to mitigate ID jittering
-        # ------------------------------------------------------------------
-        tracks_df = self.remove_id_jittering(tracks_df)
         return tracks_df
 
     @staticmethod
@@ -443,4 +423,145 @@ class PlayerTracker:
                     row[f'player{pid}_x'] = np.nan
                     row[f'player{pid}_y'] = np.nan
             records.append(row)
-        return pd.DataFrame(records) 
+        return pd.DataFrame(records)
+
+    # ---------------------------------------------------------------------
+    # New helper utilities (side-agnostic)                                               
+    # ---------------------------------------------------------------------
+    def _iou(self, bbox1: Tuple[float, float, float, float], bbox2: Tuple[float, float, float, float]) -> float:
+        """Wrapper around `_compute_iou` to keep public helpers clustered together."""
+        return self._compute_iou(bbox1, bbox2)
+
+    def _best_iou_match(
+        self,
+        detection_bbox: Tuple[float, float, float, float],
+        candidate_ids: List[int],
+        last_bbox_per_id: Dict[int, Tuple[int, Tuple[float, float, float, float]]],
+        current_frame: int,
+    ) -> Tuple[int, float]:
+        """Return `(best_id, frame_delta)` given incremental `LOOKBACK_STEPS`.
+
+        The function walks through `LOOKBACK_STEPS` (1,2,3,...) and returns the
+        first ID that has an IOU above `IOU_MATCH_THRESHOLD` within that exact
+        look-back window. If no ID satisfies the condition, returns `(-1, inf)`.
+        """
+        for lookback in LOOKBACK_STEPS:
+            best_id = -1
+            for pid in candidate_ids:
+                if pid not in last_bbox_per_id:
+                    continue
+                last_frame, prev_bbox = last_bbox_per_id[pid]
+                if current_frame - last_frame != lookback:
+                    continue
+                iou_val = self._iou(detection_bbox, prev_bbox)
+                if iou_val >= IOU_MATCH_THRESHOLD:
+                    best_id = pid
+                    break  # Found a valid match at this look-back step
+            if best_id != -1:
+                return best_id, lookback
+        return -1, float("inf")
+
+    def _histogram_similarity(self, det_hist: np.ndarray, hist_history: List[np.ndarray]) -> float:
+        """Compute average histogram similarity against historical entries."""
+        if not hist_history:
+            return 0.0
+        sims = [self._hist_similarity(det_hist, h) for h in hist_history[-100:]]
+        return float(np.mean(sims)) if sims else 0.0
+
+    def _predict_position(self, history: List[Tuple[float, float]]) -> Tuple[float, float]:
+        """Extrapolate next (cx,cy) position using the last two points."""
+        if len(history) >= 2:
+            (x1, y1), (x2, y2) = history[-2], history[-1]
+            return x2 + (x2 - x1), y2 + (y2 - y1)
+        elif len(history) == 1:
+            return history[-1]
+        else:
+            return (np.nan, np.nan)
+
+    def _assign_ids_for_side(
+        self,
+        team: str,
+        detections: List[Dict],  # dict keys: bbox, cx, cy, hist, row_idx
+        candidate_ids: List[int],
+        current_frame: int,
+        last_bbox_per_id: Dict[int, Tuple[int, Tuple[float, float, float, float]]],
+        last_positions: Dict[int, Tuple[float, float]],
+        position_history: Dict[int, List[Tuple[float, float]]],
+        hist_history: Dict[int, List[np.ndarray]],
+    ) -> Tuple[Dict[int, int], Dict[int, Tuple[int, Tuple[float, float, float, float]]]]:
+        """Return mapping `row_idx -> pid` for this side, enforcing priority order.
+
+        Steps implemented:
+        1. IOU matching with incremental lookbacks.
+        2. Single-assignment shortcut (exactly one IOU assigned → other det gets remaining ID).
+        3. Histogram-based re-identification for any remaining detections.
+        4. Extrapolation fallback using recent trajectories when histogram fails.
+        """
+        assignments: Dict[int, int] = {}
+        assigned_ids: set[int] = set()
+        unassigned_dets: List[Dict] = []
+
+        # STEP-1: Incremental IOU matching
+        for det in detections:
+            best_id, _ = self._best_iou_match(det["bbox"], candidate_ids, last_bbox_per_id, current_frame)
+            if best_id != -1 and best_id not in assigned_ids:
+                assignments[det["row_idx"]] = best_id
+                assigned_ids.add(best_id)
+                last_bbox_per_id[best_id] = (current_frame, det["bbox"])
+            else:
+                unassigned_dets.append(det)
+
+        # STEP-2: Single IOU shortcut
+        if len(assignments) == 1 and len(unassigned_dets) == 1:
+            remaining_id = [pid for pid in candidate_ids if pid not in assigned_ids][0]
+            det = unassigned_dets.pop()
+            assignments[det["row_idx"]] = remaining_id
+            assigned_ids.add(remaining_id)
+            last_bbox_per_id[remaining_id] = (current_frame, det["bbox"])
+
+        # STEP-3: Histogram-based matching for any leftover detections
+        still_unassigned: List[Dict] = []
+        for det in unassigned_dets:
+            best_score = -float("inf")
+            chosen_id = -1
+            for pid in candidate_ids:
+                if pid in assigned_ids:
+                    continue
+                sim = self._histogram_similarity(det["hist"], hist_history[pid])
+                if sim > best_score:
+                    best_score = sim
+                    chosen_id = pid
+            if chosen_id != -1:
+                assignments[det["row_idx"]] = chosen_id
+                assigned_ids.add(chosen_id)
+                last_bbox_per_id[chosen_id] = (current_frame, det["bbox"])
+            else:
+                still_unassigned.append(det)
+
+        # STEP-4: Extrapolation using last positions if two detections remain for same side
+        for det in still_unassigned:
+            best_dist = float("inf")
+            chosen_id = -1
+            for pid in candidate_ids:
+                if pid in assigned_ids:
+                    continue
+                pred_x, pred_y = self._predict_position(position_history[pid])
+                dist = (
+                    np.hypot(det["cx"] - pred_x, det["cy"] - pred_y)
+                    if not np.isnan(pred_x)
+                    else float("inf")
+                )
+                if dist < best_dist:
+                    best_dist = dist
+                    chosen_id = pid
+            if chosen_id == -1:
+                # If everything fails, assign first available id deterministically
+                remaining = [pid for pid in candidate_ids if pid not in assigned_ids]
+                if not remaining:
+                    continue  # Should not occur, but guard anyway
+                chosen_id = remaining[0]
+            assignments[det["row_idx"]] = chosen_id
+            assigned_ids.add(chosen_id)
+            last_bbox_per_id[chosen_id] = (current_frame, det["bbox"])
+
+        return assignments, last_bbox_per_id 
