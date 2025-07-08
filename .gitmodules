@@ -1,3 +1,6 @@
 [submodule "sed_crnn"]
 	path = sed_crnn
 	url = git@github.com:noamzilo/sed_crnn.git
+[submodule "monotrack"]
+	path = monotrack
+	url = git@github.com:noamzilo/monotrack.git
