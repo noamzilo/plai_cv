@@ -2,6 +2,7 @@ import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
 from tqdm import tqdm  # type: ignore
 from typing import List, Dict, Tuple
+import cv2  # type: ignore
 
 class PlayerTracker:
     """
@@ -31,7 +32,26 @@ class PlayerTracker:
         cy = y2
         return cx, cy
 
-    def run_tracking(self, detections_df: pd.DataFrame) -> pd.DataFrame:
+    def _extract_histogram(self, image: np.ndarray, bbox: Tuple[float, float, float, float]) -> np.ndarray:
+        x1, y1, x2, y2 = map(int, bbox)
+        h, w = image.shape[:2]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            # Invalid bbox, return zeros
+            return np.zeros(512, dtype=np.float32)
+        crop = image[y1:y2, x1:x2]
+        if crop.size == 0:
+            return np.zeros(512, dtype=np.float32)
+        hist = cv2.calcHist([crop], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+        cv2.normalize(hist, hist)
+        return hist.flatten()
+
+    def _hist_similarity(self, hist1: np.ndarray, hist2: np.ndarray) -> float:
+        # Use correlation (1.0 = perfect match)
+        return float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
+
+    def run_tracking(self, detections_df: pd.DataFrame, frame_images: Dict[int, np.ndarray]) -> pd.DataFrame:
         # Group detections by frame
         grouped = detections_df.groupby("frame")
         frame_indices = sorted(grouped.groups.keys())
@@ -40,6 +60,8 @@ class PlayerTracker:
         last_positions = {pid: (np.nan, np.nan) for pid in range(self.num_players)}
         position_history = {pid: [] for pid in range(self.num_players)}
         last_active = {pid: -1 for pid in range(self.num_players)}
+        # --- HISTOGRAM HISTORY ---
+        hist_history = {pid: [] for pid in range(self.num_players)}
         track_records: List[Dict] = []
         for i, frame_idx in enumerate(frame_indices):
             if i % 50 == 0:
@@ -76,7 +98,14 @@ class PlayerTracker:
                     if len(position_history[pid]) > self.history_length:
                         position_history[pid] = position_history[pid][-self.history_length:]
                     last_active[pid] = frame_idx
-            # 2. For any remaining detections, assign to empty slots on correct team by interpolation/extrapolation and proximity
+                    # --- HISTOGRAM ---
+                    if frame_images is not None and frame_idx in frame_images:
+                        image = frame_images[frame_idx]
+                        hist = self._extract_histogram(image, min_det["bbox"])
+                        hist_history[pid].append(hist)
+                        if len(hist_history[pid]) > 100:
+                            hist_history[pid] = hist_history[pid][-100:]
+            # 2. For any remaining detections, assign to empty slots on correct team by interpolation/extrapolation, proximity, and histogram
             for team in ["close", "far"]:
                 empty_slots = [pid for pid in side_slots[team] if slot_assignment[pid] is None]
                 unassigned_dets = [idx for idx, det in enumerate(det_list) if det["team"] == team and idx not in assigned]
@@ -93,11 +122,32 @@ class PlayerTracker:
                             pred = (np.nan, np.nan)
                         best_idx = None
                         best_dist = float("inf")
+                        best_sim = -float("inf")
+                        best_score = float("inf")
                         for idx in list(remaining_dets):
                             dx, dy = det_list[idx]["cx"], det_list[idx]["cy"]
                             dist = np.hypot(dx - pred[0], dy - pred[1]) if not np.isnan(pred[0]) else 0
-                            if dist < best_dist:
-                                best_dist = dist
+                            # --- HISTOGRAM ---
+                            if frame_images is not None and frame_idx in frame_images:
+                                image = frame_images[frame_idx]
+                                det_hist = self._extract_histogram(image, det_list[idx]["bbox"])
+                                # Compare to average of last N histograms
+                                sim_scores = []
+                                for N in [10, 20, 50, 75, 100]:
+                                    if len(hist_history[pid]) >= N:
+                                        avg_hist = np.mean(hist_history[pid][-N:], axis=0)
+                                        sim = self._hist_similarity(det_hist, avg_hist)
+                                        sim_scores.append(sim)
+                                if sim_scores:
+                                    sim = float(np.mean(sim_scores))
+                                else:
+                                    sim = 0.0
+                            else:
+                                sim = 0.0
+                            # Combine distance and similarity (tunable: here, prioritize similarity if available)
+                            score = dist - sim * 100  # Higher sim reduces score
+                            if score < best_score:
+                                best_score = score
                                 best_idx = idx
                         if best_idx is not None:
                             idx = best_idx
@@ -110,6 +160,13 @@ class PlayerTracker:
                         if len(position_history[pid]) > self.history_length:
                             position_history[pid] = position_history[pid][-self.history_length:]
                         last_active[pid] = frame_idx
+                        # --- HISTOGRAM ---
+                        if frame_images is not None and frame_idx in frame_images:
+                            image = frame_images[frame_idx]
+                            hist = self._extract_histogram(image, det["bbox"])
+                            hist_history[pid].append(hist)
+                            if len(hist_history[pid]) > 100:
+                                hist_history[pid] = hist_history[pid][-100:]
             # 3. For every player, append a record (even if missing)
             for pid in range(self.num_players):
                 det = slot_assignment[pid]
