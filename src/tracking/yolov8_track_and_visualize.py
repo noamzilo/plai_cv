@@ -6,6 +6,8 @@ from src.utils.paths import project_root, test_video_name, output_path
 from src.tracking.PlayerTracker import PlayerTracker
 from src.acquisition.VideoReader import VideoReader
 from typing import Tuple
+import numpy as np
+
 # --- CONFIG ---
 output_path.mkdir(exist_ok=True)
 VIDEO_PATH = Path(project_root / f"data/proprietary/{test_video_name}")
@@ -22,7 +24,17 @@ net_left: Tuple[float, float] = (73, 482)
 net_right: Tuple[float, float] = (1154, 490)
 
 def main():
-	detector = PlayerDetection()
+	pitch_polygon = np.array(
+		[
+			[70, 319],
+			[82, 1079],
+			[1919, 1079],
+			[1919, 738],
+			[740, 370],
+			[70, 319]
+		]
+	)
+	detector = PlayerDetection(pitch_polygon=pitch_polygon)
 
 	# Step 1: Detect players and save detections (no tracking)
 	if DETECTIONS_CSV.is_file():
