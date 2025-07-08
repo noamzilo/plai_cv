@@ -4,6 +4,7 @@ from src.detection.PlayerDetection import PlayerDetection
 from src.tracking.TrackingVisualizer import TrackingVisualizer
 from src.utils.paths import project_root, test_video_name, output_path
 from src.tracking.PlayerTracker import PlayerTracker
+from src.acquisition.VideoReader import VideoReader
 from typing import Tuple
 # --- CONFIG ---
 output_path.mkdir(exist_ok=True)
@@ -32,7 +33,8 @@ def main():
 
     # Step 2: Run custom PlayerTracker on detections to assign consistent IDs and teams
     tracker = PlayerTracker(net_left=net_left, net_right=net_right)
-    tracks_df = tracker.run_tracking(detections_df)
+    video_reader = VideoReader(VIDEO_PATH)
+    tracks_df = tracker.run_tracking(detections_df, video_reader)
 
     # Save tracker outputs
     tracks_df.to_csv(TRACKING_CSV, index=False)
