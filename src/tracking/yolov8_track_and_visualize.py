@@ -22,36 +22,46 @@ net_left: Tuple[float, float] = (73, 482)
 net_right: Tuple[float, float] = (1154, 490)
 
 def main():
-    detector = PlayerDetection()
+	detector = PlayerDetection()
 
-    # Step 1: Detect players and save detections (no tracking)
-    if DETECTIONS_CSV.is_file():
-        detections_df = pd.read_csv(DETECTIONS_CSV)
-    else:
-        detections_df = detector.detect_and_save(VIDEO_PATH, DETECTIONS_CSV)
-        print(f"Saved player detections to {DETECTIONS_CSV}")
+	# Step 1: Detect players and save detections (no tracking)
+	if DETECTIONS_CSV.is_file():
+		detections_df = pd.read_csv(DETECTIONS_CSV)
+	else:
+		detections_df = detector.detect_and_save(VIDEO_PATH, DETECTIONS_CSV)
+		print(f"Saved player detections to {DETECTIONS_CSV}")
 
-    # Step 2: Run custom PlayerTracker on detections to assign consistent IDs and teams
-    tracker = PlayerTracker(net_left=net_left, net_right=net_right)
-    video_reader = VideoReader(VIDEO_PATH)
-    tracks_df = tracker.run_tracking(detections_df, video_reader)
+	# Step 2: Run custom PlayerTracker on detections to assign consistent IDs and teams
+	if TRACKING_CSV.is_file():
+		tracks_df = pd.read_csv(TRACKING_CSV)
+		print(f"Loaded player tracks from {TRACKING_CSV}")
+	else:
+		tracker = PlayerTracker(net_left=net_left, net_right=net_right)
+		video_reader = VideoReader(VIDEO_PATH)
+		tracks_df = tracker.run_tracking(detections_df, video_reader)
+		tracks_df.to_csv(TRACKING_CSV, index=False)
+		print(f"Saved player tracks to {TRACKING_CSV}")
 
-    # Save tracker outputs
-    tracks_df.to_csv(TRACKING_CSV, index=False)
-    print(f"Saved player tracks to {TRACKING_CSV}")
+	# Step 3: Convert to wide format and save team tracking
+	if TEAM_TRACKING_CSV.is_file():
+		team_tracking_df = pd.read_csv(TEAM_TRACKING_CSV)
+		print(f"Loaded team/ID assigned tracks from {TEAM_TRACKING_CSV}")
+	else:
+		# Always use the latest tracks_df (from cache or just computed)
+		team_tracking_df = PlayerTracker.tracks_to_team_df(tracks_df)
+		team_tracking_df.to_csv(TEAM_TRACKING_CSV, index=False)
+		print(f"Saved team/ID assigned tracks to {TEAM_TRACKING_CSV}")
 
-    # Optionally, convert to wide format and save
-    team_tracking_df = PlayerTracker.tracks_to_team_df(tracks_df)
-    team_tracking_df.to_csv(TEAM_TRACKING_CSV, index=False)
-    print(f"Saved team/ID assigned tracks to {TEAM_TRACKING_CSV}")
-
-    # Step 3: Visualize tracking results using the assigned track IDs
-    if VISUALIZATION_VIDEO.is_file():
-        print(f"Visualization video already exists at {VISUALIZATION_VIDEO}")
-    else:
-        visualizer = TrackingVisualizer(VIDEO_PATH, tracks_df, net_left=tracker.net_left, net_right=tracker.net_right)
-        visualizer.visualize_and_save(VISUALIZATION_VIDEO)
-        print(f"Saved visualization video to {VISUALIZATION_VIDEO}")
+	# Step 4: Visualize tracking results using the assigned track IDs
+	if VISUALIZATION_VIDEO.is_file():
+		print(f"Visualization video already exists at {VISUALIZATION_VIDEO}")
+	else:
+		# Always reload tracks_df from cache to ensure consistency
+		tracks_df = pd.read_csv(TRACKING_CSV)
+		tracker = PlayerTracker(net_left=net_left, net_right=net_right)
+		visualizer = TrackingVisualizer(VIDEO_PATH, tracks_df, net_left=tracker.net_left, net_right=tracker.net_right)
+		visualizer.visualize_and_save(VISUALIZATION_VIDEO)
+		print(f"Saved visualization video to {VISUALIZATION_VIDEO}")
 
 if __name__ == "__main__":
-    main() 
+	main() 

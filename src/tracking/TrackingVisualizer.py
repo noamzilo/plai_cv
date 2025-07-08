@@ -3,6 +3,7 @@ import pandas as pd  # type: ignore
 from pathlib import Path
 from src.acquisition.VideoReader import VideoReader
 from tqdm import tqdm
+import random
 
 class TrackingVisualizer:
     """
@@ -13,6 +14,16 @@ class TrackingVisualizer:
         self.tracking_df = tracking_df
         self.net_left = net_left
         self.net_right = net_right
+        # Mapping from track IDs to unique BGR colors used for consistent visualization
+        self.id_color_map: dict[int, tuple[int, int, int]] = {
+            0: (0, 0, 255),
+            1: (0, 255, 0),
+            2: (255, 0, 0),
+            3: (255, 255, 0),
+        }
+
+    def _get_color(self, track_id: int) -> tuple[int, int, int]:
+        return self.id_color_map[track_id]
 
     def visualize_and_save(self, output_path: Path, box_color=(0, 255, 0), thickness=2, font_scale=0.7):
         print("Starting visualization...")
@@ -46,12 +57,21 @@ class TrackingVisualizer:
                         continue
                     x1, y1, x2, y2 = int(row['x1']), int(row['y1']), int(row['x2']), int(row['y2'])
                     track_id = int(row['track_id']) if 'track_id' in row else -1
+                    # Choose a unique color for each track_id, fallback to default if unavailable
+                    color = self._get_color(track_id) if track_id != -1 else box_color
                     # Draw bounding box
-                    cv2.rectangle(frame_draw, (x1, y1), (x2, y2), box_color, thickness)
+                    cv2.rectangle(frame_draw, (x1, y1), (x2, y2), color, thickness)
                     # Draw track_id label
                     label = f'ID {track_id}'
-                    cv2.putText(frame_draw, label, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, font_scale, box_color, 2)
+                    cv2.putText(
+                        frame_draw,
+                        label,
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale,
+                        color,
+                        2,
+                    )
             out.write(frame_draw)
         out.release()
         print(f"Saved visualization video to {output_path}") 

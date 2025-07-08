@@ -163,6 +163,9 @@ class PlayerTracker:
         for frame_idx in frames_sorted:
             frame_rows = tracks_df[tracks_df["frame"] == frame_idx].copy()
 
+            # Collect all row_index -> id assignments for the current frame
+            assignments_for_frame: Dict[int, int] = {}
+
             # Group detections by side based on bbox geometry (more robust than using current ID)
             detections_by_side: Dict[str, List[Tuple[int, Tuple[float, float, float, float]]]] = {"close": [], "far": []}
             for row_index, row in frame_rows.iterrows():
@@ -190,18 +193,17 @@ class PlayerTracker:
                     if len(recent_ids) == 1:
                         row_index, bbox = side_detections[0]
                         chosen_id = recent_ids[0]
-                        assignments = {row_index: chosen_id}
+                        assignments_for_frame[row_index] = chosen_id
                         last_bbox_per_id[chosen_id] = (frame_idx, bbox)
-                        updated_records.append(frame_rows.assign(track_id=lambda df, ri=assignments: df.index.map(ri).fillna(df.track_id)))
                         # Skip further processing for this side
                         continue
 
                 # ------------------------------------------------------------------
                 # Step 1: Attempt to match detections to existing IDs by IOU
                 # ------------------------------------------------------------------
-                unassigned_detections = []
+                unassigned_detections: List[Tuple[int, Tuple[float, float, float, float]]] = []
                 assigned_ids = set()
-                assignments: Dict[int, int] = {}  # row_index -> new_id
+                side_assignments: Dict[int, int] = {}  # row_index -> new_id
 
                 # Build all (id, detection) IOU pairs
                 pairs: List[Tuple[float, float, int, int, Tuple[float, float, float, float]]] = []  # (iou, dist, id, row_idx, bbox)
@@ -224,7 +226,7 @@ class PlayerTracker:
                     if pid in assigned_ids:
                         unassigned_detections.append((row_index, bbox))
                         continue
-                    assignments[row_index] = pid
+                    side_assignments[row_index] = pid
                     assigned_ids.add(pid)
                     last_bbox_per_id[pid] = (frame_idx, bbox)
 
@@ -248,13 +250,16 @@ class PlayerTracker:
                     else:
                         # Fallback in rare cases – keep original ID
                         chosen_id = int(frame_rows.loc[row_index, "track_id"])
-                    assignments[row_index] = chosen_id
+                    side_assignments[row_index] = chosen_id
                     last_bbox_per_id[chosen_id] = (frame_idx, bbox)
+
+            # Merge side-specific assignments into frame-level mapping
+            assignments_for_frame.update(side_assignments)
 
             # ----------------------------------------------------------------------
             # Apply the resolved IDs for this frame
             # ----------------------------------------------------------------------
-            for row_index, resolved_id in assignments.items():
+            for row_index, resolved_id in assignments_for_frame.items():
                 frame_rows.at[row_index, "track_id"] = resolved_id
 
             updated_records.append(frame_rows)
